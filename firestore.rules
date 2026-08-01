@@ -1,0 +1,72 @@
+rules_version = '2';
+
+// ============================================================
+// ATURAN KEAMANAN FIRESTORE — Catatan Kinerja Guru
+// Tempel seluruh isi file ini di:
+// Firebase Console → Firestore Database → Rules → Publish
+// ============================================================
+//
+// - Admin (users/{uid}.peran == 'admin'): baca-tulis semua data.
+// - Guru: HANYA MEMBACA dokumen yang guruId-nya miliknya. Tidak bisa menulis.
+// - Pengaturan sekolah: terbaca semua pengguna login, ditulis admin.
+// - Dokumen users: terbaca pemiliknya & admin; ditulis admin saja.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function masuk() { return request.auth != null; }
+
+    function dataSaya() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function adalahAdmin() {
+      return masuk()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && dataSaya().peran == 'admin';
+    }
+
+    function guruIdSaya() { return dataSaya().guruId; }
+
+    function adalahGuruPemilik(gid) {
+      return masuk()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && dataSaya().peran == 'guru'
+        && gid == guruIdSaya();
+    }
+
+    match /users/{uid} {
+      allow read: if masuk() && (request.auth.uid == uid || adalahAdmin());
+      allow write: if adalahAdmin();
+    }
+
+    match /pengaturan/{docId} {
+      allow read: if masuk();
+      allow write: if adalahAdmin();
+    }
+
+    match /guru/{guruId} {
+      allow read: if adalahAdmin() || adalahGuruPemilik(guruId);
+      allow write: if adalahAdmin();
+    }
+
+    match /tugasStruktural/{docId} {
+      allow read: if adalahAdmin() || adalahGuruPemilik(resource.data.guruId);
+      allow write: if adalahAdmin();
+    }
+
+    match /tugasInsidental/{docId} {
+      allow read: if adalahAdmin() || adalahGuruPemilik(resource.data.guruId);
+      allow write: if adalahAdmin();
+    }
+
+    match /catatanKinerja/{docId} {
+      allow read: if adalahAdmin() || adalahGuruPemilik(resource.data.guruId);
+      allow write: if adalahAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
