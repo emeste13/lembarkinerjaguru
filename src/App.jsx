@@ -13,7 +13,7 @@ import {
   Users, Briefcase, CalendarClock, NotebookPen, LayoutDashboard, FileBarChart,
   Plus, Pencil, Trash2, Download, Search, X, GraduationCap, Award, AlertTriangle,
   Lightbulb, Clock, ShieldCheck, ChevronDown, LogIn, LogOut, KeyRound, Eye, EyeOff,
-  ThumbsUp, ThumbsDown,
+  ThumbsUp, ThumbsDown, ClipboardCheck, FileSpreadsheet, Settings, Save,
 } from "lucide-react";
 
 /* ================= KONSTANTA ================= */
@@ -47,6 +47,20 @@ const labelNilai = (n) => PENILAIAN.find((p) => p.nilai === n)?.label || "Belum 
 
 const BULAN_TA = ["Jul", "Agu", "Sep", "Okt", "Nov", "Des", "Jan", "Feb", "Mar", "Apr", "Mei", "Jun"];
 const STATUS_PEG = ["GTY (Guru Tetap Yayasan)", "GTTY (Guru Tidak Tetap)", "PNS DPK", "Kontrak"];
+
+// Kategori pegawai — menentukan lembar penilaian fungsional yang relevan
+const KATEGORI_PEGAWAI = ["Guru", "Tenaga Kependidikan", "Tenaga Administrasi"];
+const bukanAdministrasi = (g) => (g?.kategori || "Guru") !== "Tenaga Administrasi";
+
+// Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — skala 1–100
+const TAHAPAN_SUPERVISI = ["Validasi Modul/Perencanaan Pembelajaran", "Pelaksanaan Pembelajaran", "Refleksi"];
+
+// Penilaian Kinerja Administrasi (Tenaga Administrasi) — skala 1–100
+const KRITERIA_ADMINISTRASI = ["Kedisiplinan & Kehadiran", "Ketelitian & Akurasi Kerja", "Pelayanan & Responsivitas", "Inisiatif & Kerja Sama", "Penguasaan Sistem/Administrasi"];
+
+// Pita warna untuk skor 1–100
+const warnaSkor100 = (n) => (n >= 85 ? "#1a5632" : n >= 70 ? "#2e7d4f" : n >= 55 ? "#c2912e" : "#b23a3a");
+const labelSkor100 = (n) => (n >= 85 ? "Sangat Baik" : n >= 70 ? "Baik" : n >= 55 ? "Cukup" : "Kurang");
 
 /* ================= UTILITAS ================= */
 
@@ -177,6 +191,8 @@ const hitungProfil = (guruId, data, ta, sem) => {
   const str = data.struktural.filter((s) => s.guruId === guruId);
   const ins = data.insidental.filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
   const cat = data.catatan.filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
+  const sup = (data.supervisi || []).filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
+  const adm = (data.administrasi || []).filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
   const g = data.guru.find((x) => x.id === guruId);
 
   const totalJamIns = ins.reduce((a, b) => a + (Number(b.jam) || 0), 0);
@@ -204,17 +220,45 @@ const hitungProfil = (guruId, data, ta, sem) => {
   const rataStruktural = rata(strDinilai);
   const rataInsidental = rata(insDinilai);
 
-  // Radar 0–100 sederhana
-  const radar = [
-    { dimensi: "Beban Mengajar", nilai: Math.min(100, Math.round(((g?.jam || 0) / 24) * 100)) },
-    { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 4) * 70 + str.length * 15)) },
-    { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 4) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
-    { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
-    { dimensi: "Inovasi", nilai: Math.min(100, nCat("Inovasi") * 30) },
-    { dimensi: "Prestasi", nilai: Math.min(100, nCat("Prestasi") * 30) },
-  ];
+  // Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — rata-rata per tahapan, skala 1–100
+  const perTahapanSupervisi = TAHAPAN_SUPERVISI.map((t) => {
+    const l = sup.filter((r) => r.tahapan === t);
+    return { tahapan: t, nilai: l.length ? Math.round(rata(l)) : null, jumlah: l.length };
+  });
+  const rataSupervisi = sup.length ? Math.round(rata(sup)) : null;
 
-  return { g, str, ins, cat, totalJamIns, perKategori, perJenisCatatan, perBulan, skorStruktural, skorInsidental, skorCatatan, skorTotal, radar, belumDinilai, rataStruktural, rataInsidental };
+  // Penilaian Kinerja Administrasi (Tenaga Administrasi) — rata-rata per kriteria, skala 1–100
+  const perKriteriaAdministrasi = KRITERIA_ADMINISTRASI.map((k) => {
+    const l = adm.filter((r) => r.kriteria === k);
+    return { kriteria: k, nilai: l.length ? Math.round(rata(l)) : null, jumlah: l.length };
+  });
+  const rataAdministrasi = adm.length ? Math.round(rata(adm)) : null;
+
+  const kategoriPegawai = g?.kategori || "Guru";
+  const skorFungsional = kategoriPegawai === "Tenaga Administrasi" ? rataAdministrasi : rataSupervisi;
+
+  // Radar 0–100 sederhana
+  const radar = kategoriPegawai === "Tenaga Administrasi"
+    ? [
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 4) * 70 + str.length * 15)) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 4) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
+        { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
+        ...perKriteriaAdministrasi.filter((k) => k.nilai !== null).map((k) => ({ dimensi: k.kriteria.split(" ")[0], nilai: k.nilai })),
+      ]
+    : [
+        { dimensi: "Beban Mengajar", nilai: Math.min(100, Math.round(((g?.jam || 0) / 24) * 100)) },
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 4) * 70 + str.length * 15)) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 4) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
+        { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
+        { dimensi: "Inovasi", nilai: Math.min(100, nCat("Inovasi") * 30) },
+        { dimensi: "Supervisi Pembelajaran", nilai: rataSupervisi ?? 0 },
+      ];
+
+  return {
+    g, str, ins, cat, sup, adm, totalJamIns, perKategori, perJenisCatatan, perBulan,
+    skorStruktural, skorInsidental, skorCatatan, skorTotal, radar, belumDinilai, rataStruktural, rataInsidental,
+    perTahapanSupervisi, rataSupervisi, perKriteriaAdministrasi, rataAdministrasi, kategoriPegawai, skorFungsional,
+  };
 };
 
 /* ================= APLIKASI UTAMA ================= */
@@ -224,9 +268,12 @@ const TAB = [
   { id: "guru", label: "Data Guru", I: Users },
   { id: "struktural", label: "Tugas Struktural", I: Briefcase },
   { id: "insidental", label: "Tugas Insidental", I: CalendarClock },
+  { id: "supervisi", label: "Supervisi Pembelajaran", I: ClipboardCheck },
+  { id: "administrasi", label: "Penilaian Administrasi", I: FileSpreadsheet },
   { id: "catatan", label: "Catatan Kinerja", I: NotebookPen },
   { id: "laporan", label: "Laporan Guru", I: FileBarChart },
   { id: "akses", label: "Akses & Token", I: KeyRound },
+  { id: "pengaturan", label: "Pengaturan Sekolah", I: Settings },
 ];
 
 export default function AplikasiKinerjaGuru() {
@@ -235,6 +282,14 @@ export default function AplikasiKinerjaGuru() {
   const [tab, setTab] = useState("dasbor");
   const [ta, setTa] = useState("2026/2027");
   const [sem, setSem] = useState("Semua");
+  const taTersinkron = React.useRef(false);
+
+  useEffect(() => {
+    if (data?.pengaturan?.ta && !taTersinkron.current) {
+      setTa(data.pengaturan.ta);
+      taTersinkron.current = true;
+    }
+  }, [data?.pengaturan?.ta]);
 
   useEffect(() => pantauSesi(setSesi), []);
 
@@ -309,9 +364,12 @@ export default function AplikasiKinerjaGuru() {
           {tab === "guru" && <TabGuru data={data} />}
           {tab === "struktural" && <TabStruktural data={data} />}
           {tab === "insidental" && <TabInsidental data={data} ta={ta} sem={sem} />}
+          {tab === "supervisi" && <TabSupervisi data={data} ta={ta} sem={sem} />}
+          {tab === "administrasi" && <TabAdministrasi data={data} ta={ta} sem={sem} />}
           {tab === "catatan" && <TabCatatan data={data} ta={ta} sem={sem} />}
           {tab === "laporan" && <TabLaporan data={data} ta={ta} sem={sem} />}
           {tab === "akses" && <TabAkun data={data} />}
+          {tab === "pengaturan" && <TabPengaturan data={data} />}
         </>) : (
           guruSesi
             ? (<>
@@ -537,6 +595,86 @@ function TabAkun({ data }) {
   );
 }
 
+/* ================= TAB PENGATURAN SEKOLAH (ADMIN) ================= */
+
+function TabPengaturan({ data }) {
+  const [nama, setNama] = useState(data.pengaturan.namaSekolah || "");
+  const [taAktif, setTaAktif] = useState(data.pengaturan.ta || "2026/2027");
+  const [taBaru, setTaBaru] = useState("");
+  const [pesan, setPesan] = useState("");
+  const [proses, setProses] = useState(false);
+
+  useEffect(() => { setNama(data.pengaturan.namaSekolah || ""); setTaAktif(data.pengaturan.ta || "2026/2027"); }, [data.pengaturan.namaSekolah, data.pengaturan.ta]);
+
+  const daftarTA = useMemo(() => {
+    const s = new Set([data.pengaturan.ta || "2026/2027"]);
+    [...data.insidental, ...data.catatan, ...(data.supervisi || []), ...(data.administrasi || [])]
+      .forEach((r) => r.tanggal && s.add(tahunAjaranDariTanggal(r.tanggal)));
+    return [...s].sort();
+  }, [data]);
+
+  const simpan = async () => {
+    if (!nama.trim() || !taAktif.trim()) return;
+    setProses(true); setPesan("");
+    try {
+      await simpanPengaturan({ namaSekolah: nama.trim(), ta: taAktif.trim() });
+      setPesan("Pengaturan berhasil disimpan. Filter Tahun Ajaran di header akan mengikuti pada muat berikutnya.");
+    } catch (e) {
+      setPesan("Gagal menyimpan: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const mulaiTAbaru = async () => {
+    const th = taBaru.trim();
+    if (!/^\d{4}\/\d{4}$/.test(th)) { window.alert("Format Tahun Ajaran harus seperti 2027/2028."); return; }
+    if (!window.confirm(`Jadikan ${th} sebagai Tahun Ajaran Aktif? Data tahun-tahun sebelumnya tetap tersimpan dan bisa dilihat lewat filter TA di header.`)) return;
+    setProses(true);
+    try {
+      await simpanPengaturan({ ta: th });
+      setTaAktif(th); setTaBaru("");
+      setPesan(`Tahun Ajaran Aktif diperbarui menjadi ${th}.`);
+    } catch (e) {
+      window.alert("Gagal memperbarui: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  return (
+    <div className="susun-v">
+      <Kartu>
+        <div className="kartu-kepala"><h2>Identitas Sekolah</h2><span className="sub">Ditampilkan di header, layar login, dan kop laporan</span></div>
+        <div className="form-grid">
+          <Kolom label="Nama Sekolah" wajib><input value={nama} onChange={(e) => setNama(e.target.value)} /></Kolom>
+          <Kolom label="Tahun Ajaran Aktif" wajib>
+            <select value={taAktif} onChange={(e) => setTaAktif(e.target.value)}>
+              {daftarTA.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Kolom>
+        </div>
+        <div className="form-aksi" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <span className="teks-kecil" style={{ color: pesan.includes("Gagal") ? "#b23a3a" : "#177a3e" }}>{pesan}</span>
+          <Tombol onClick={simpan}><Ikon I={Save} size={15} /> {proses ? "Menyimpan…" : "Simpan Pengaturan"}</Tombol>
+        </div>
+      </Kartu>
+
+      <Kartu>
+        <div className="kartu-kepala"><h2>Ganti ke Tahun Ajaran Baru</h2><span className="sub">Gunakan saat pergantian tahun ajaran (mis. dari 2026/2027 ke 2027/2028). Data lama tetap tersimpan dan tetap bisa dibuka lewat filter TA di header — ini hanya mengubah tahun yang tampil sebagai default.</span></div>
+        <div className="form-grid" style={{ maxWidth: 360 }}>
+          <Kolom label="Tahun Ajaran Baru (format: 2027/2028)">
+            <input value={taBaru} onChange={(e) => setTaBaru(e.target.value)} placeholder="2027/2028" />
+          </Kolom>
+        </div>
+        <div className="form-aksi">
+          <Tombol varian="netral" onClick={mulaiTAbaru}><Ikon I={CalendarClock} size={15} /> Mulai Tahun Ajaran Ini</Tombol>
+        </div>
+        <p className="teks-redup" style={{ marginTop: 10 }}>
+          Data guru, tugas struktural yang masih berjalan, dan akun login tidak ikut terhapus atau tereset saat berganti tahun ajaran.
+          Tugas struktural yang perlu diperbarui SK-nya bisa ditutup (isi tanggal Selesai) lalu dibuat penugasan baru di tab Tugas Struktural.
+        </p>
+      </Kartu>
+    </div>
+  );
+}
+
 /* ================= DASBOR ================= */
 
 function Dasbor({ data, ta, sem, kePindah }) {
@@ -631,37 +769,41 @@ function TabGuru({ data }) {
     [g.nama, g.mapel, g.nik].join(" ").toLowerCase().includes(cari.toLowerCase()));
 
   const simpan = () => {
-    if (!form.nama.trim() || !form.mapel.trim()) return;
+    if (!form.nama.trim()) return;
+    if (form.kategori === "Guru" && !form.mapel.trim()) return;
     if (form.id) aman(perbaruiDok(KOLEKSI.guru, form.id, form));
     else aman(tambahDok(KOLEKSI.guru, form));
     setForm(null);
   };
 
   const hapus = (id) => {
-    if (!window.confirm("Hapus guru ini beserta seluruh tugas, catatan, dan peran akunnya? Akun login di Firebase Authentication perlu dinonaktifkan terpisah dari Console.")) return;
+    if (!window.confirm("Hapus pegawai ini beserta seluruh tugas, catatan, dan peran akunnya? Akun login di Firebase Authentication perlu dinonaktifkan terpisah dari Console.")) return;
     aman(hapusGuruMenyeluruh(id));
   };
+
+  const KAT_WARNA_PEG = { "Guru": "#1a5632", "Tenaga Kependidikan": "#4f7fae", "Tenaga Administrasi": "#8a5a9e" };
 
   return (
     <div className="susun-v">
       <div className="baris-alat">
-        <div className="cari"><Ikon I={Search} size={15} /><input placeholder="Cari nama, mapel, atau NIK…" value={cari} onChange={(e) => setCari(e.target.value)} /></div>
-        <Tombol onClick={() => setForm({ nama: "", nik: "", mapel: "", jam: 24, status: STATUS_PEG[0] })}><Ikon I={Plus} size={15} /> Tambah Guru</Tombol>
+        <div className="cari"><Ikon I={Search} size={15} /><input placeholder="Cari nama, mapel/jabatan, atau NIK…" value={cari} onChange={(e) => setCari(e.target.value)} /></div>
+        <Tombol onClick={() => setForm({ nama: "", nik: "", mapel: "", jam: 24, status: STATUS_PEG[0], kategori: "Guru" })}><Ikon I={Plus} size={15} /> Tambah Pegawai</Tombol>
       </div>
       <Kartu>
-        {daftar.length === 0 ? <Kosong pesan="Tidak ada guru yang cocok." /> : (
+        {daftar.length === 0 ? <Kosong pesan="Tidak ada pegawai yang cocok." /> : (
           <div className="tabel-bungkus"><table>
-            <thead><tr><th>Nama</th><th>NIK/NIP</th><th>Mata Pelajaran</th><th className="ka">Jam/Minggu</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Nama</th><th>NIK/NIP</th><th>Kategori</th><th>Mapel/Jabatan</th><th className="ka">Jam/Minggu</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {daftar.map((g) => (
                 <tr key={g.id}>
                   <td><strong>{g.nama}</strong></td>
                   <td>{g.nik || "-"}</td>
-                  <td>{g.mapel}</td>
-                  <td className="ka">{g.jam}</td>
+                  <td><Lencana warna={KAT_WARNA_PEG[g.kategori || "Guru"]}>{g.kategori || "Guru"}</Lencana></td>
+                  <td>{g.mapel || "-"}</td>
+                  <td className="ka">{g.jam || "-"}</td>
                   <td><span className="teks-kecil">{g.status}</span></td>
                   <td className="aksi">
-                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...g })}><Ikon I={Pencil} size={15} /></button>
+                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ kategori: "Guru", ...g })}><Ikon I={Pencil} size={15} /></button>
                     <button className="btn-ikon bahaya" title="Hapus" onClick={() => hapus(g.id)}><Ikon I={Trash2} size={15} /></button>
                   </td>
                 </tr>
@@ -672,12 +814,19 @@ function TabGuru({ data }) {
       </Kartu>
 
       {form && (
-        <Modal judul={form.id ? "Ubah Data Guru" : "Tambah Guru"} onTutup={() => setForm(null)}>
+        <Modal judul={form.id ? "Ubah Data Pegawai" : "Tambah Pegawai"} onTutup={() => setForm(null)}>
           <div className="form-grid">
+            <Kolom label="Kategori Pegawai" wajib>
+              <select value={form.kategori || "Guru"} onChange={(e) => setForm({ ...form, kategori: e.target.value })}>
+                {KATEGORI_PEGAWAI.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
             <Kolom label="Nama lengkap & gelar" wajib><input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} placeholder="Ust. …, S.Pd." /></Kolom>
             <Kolom label="NIK / NIP"><input value={form.nik} onChange={(e) => setForm({ ...form, nik: e.target.value })} /></Kolom>
-            <Kolom label="Mata pelajaran" wajib><input value={form.mapel} onChange={(e) => setForm({ ...form, mapel: e.target.value })} /></Kolom>
-            <Kolom label="Beban mengajar (jam/minggu)"><input type="number" min="0" max="40" value={form.jam} onChange={(e) => setForm({ ...form, jam: Number(e.target.value) })} /></Kolom>
+            <Kolom label={form.kategori === "Guru" ? "Mata pelajaran" : "Jabatan/Bidang Tugas"} wajib={form.kategori === "Guru"}>
+              <input value={form.mapel} onChange={(e) => setForm({ ...form, mapel: e.target.value })} placeholder={form.kategori === "Guru" ? "" : "mis. Tata Usaha, Bendahara, Pustakawan"} />
+            </Kolom>
+            <Kolom label="Beban kerja (jam/minggu)"><input type="number" min="0" max="40" value={form.jam} onChange={(e) => setForm({ ...form, jam: Number(e.target.value) })} /></Kolom>
             <Kolom label="Status kepegawaian">
               <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{STATUS_PEG.map((s) => <option key={s}>{s}</option>)}</select>
             </Kolom>
@@ -884,6 +1033,192 @@ function TabInsidental({ data, ta, sem }) {
   );
 }
 
+/* ================= TAB SUPERVISI PEMBELAJARAN (Guru & Tenaga Kependidikan) ================= */
+
+function TabSupervisi({ data, ta, sem }) {
+  const [form, setForm] = useState(null);
+  const [fGuru, setFGuru] = useState("Semua");
+
+  const guruRelevan = data.guru.filter(bukanAdministrasi);
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = (data.supervisi || [])
+    .filter((r) => cocokFilter(r.tanggal, ta, sem))
+    .filter((r) => fGuru === "Semua" || r.guruId === fGuru)
+    .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+
+  const simpan = () => {
+    if (!form.guruId || !form.tanggal || !form.tahapan) return;
+    const n = Number(form.nilai);
+    if (!Number.isFinite(n) || n < 1 || n > 100) { window.alert("Nilai harus berupa angka 1–100."); return; }
+    if (form.id) aman(perbaruiDok(KOLEKSI.supervisi, form.id, form));
+    else aman(tambahDok(KOLEKSI.supervisi, form));
+    setForm(null);
+  };
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat bungkus">
+        <p className="keterangan">Penilaian fungsional hasil supervisi pembelajaran untuk Guru & Tenaga Kependidikan — tiga tahapan, skala 1–100.</p>
+        <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
+          <option value="Semua">Semua pegawai</option>
+          {guruRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+        </select><Ikon I={ChevronDown} size={14} /></div>
+        <Tombol onClick={() => setForm({ guruId: guruRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), tahapan: TAHAPAN_SUPERVISI[0], nilai: "", catatan: "" })}>
+          <Ikon I={Plus} size={15} /> Catat Hasil Supervisi
+        </Tombol>
+      </div>
+
+      {guruRelevan.length === 0 && <Kartu><Kosong pesan="Belum ada pegawai berkategori Guru/Tenaga Kependidikan. Tambahkan di tab Data Guru." /></Kartu>}
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada hasil supervisi pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Tanggal</th><th>Pegawai</th><th>Tahapan</th><th className="ka">Nilai</th><th>Predikat</th><th>Catatan</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td className="nowrap teks-kecil">{fmtTgl(r.tanggal)}</td>
+                  <td><strong>{namaGuru(r.guruId)}</strong></td>
+                  <td className="teks-kecil">{r.tahapan}</td>
+                  <td className="ka"><strong style={{ color: warnaSkor100(Number(r.nilai)) }}>{r.nilai}</strong></td>
+                  <td><Lencana warna={warnaSkor100(Number(r.nilai))}>{labelSkor100(Number(r.nilai))}</Lencana></td>
+                  <td className="teks-kecil">{r.catatan || "-"}</td>
+                  <td className="aksi">
+                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
+                    <button className="btn-ikon bahaya" title="Hapus" onClick={() => window.confirm("Hapus catatan supervisi ini?") && aman(hapusDok(KOLEKSI.supervisi, r.id))}><Ikon I={Trash2} size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Hasil Supervisi" : "Catat Hasil Supervisi Pembelajaran"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <div className="grid-2-form">
+              <Kolom label="Pegawai" wajib>
+                <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
+                  {guruRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                </select>
+              </Kolom>
+              <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
+            </div>
+            <Kolom label="Tahapan Supervisi" wajib>
+              <select value={form.tahapan} onChange={(e) => setForm({ ...form, tahapan: e.target.value })}>
+                {TAHAPAN_SUPERVISI.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Nilai (1–100)" wajib>
+              <input type="number" min="1" max="100" value={form.nilai} onChange={(e) => setForm({ ...form, nilai: e.target.value })} placeholder="mis. 85" />
+            </Kolom>
+            <Kolom label="Catatan hasil supervisi"><textarea rows={3} value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} /></Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAB PENILAIAN ADMINISTRASI (Tenaga Administrasi) ================= */
+
+function TabAdministrasi({ data, ta, sem }) {
+  const [form, setForm] = useState(null);
+  const [fGuru, setFGuru] = useState("Semua");
+
+  const pegawaiRelevan = data.guru.filter((g) => (g.kategori || "Guru") === "Tenaga Administrasi");
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = (data.administrasi || [])
+    .filter((r) => cocokFilter(r.tanggal, ta, sem))
+    .filter((r) => fGuru === "Semua" || r.guruId === fGuru)
+    .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+
+  const simpan = () => {
+    if (!form.guruId || !form.tanggal || !form.kriteria) return;
+    const n = Number(form.nilai);
+    if (!Number.isFinite(n) || n < 1 || n > 100) { window.alert("Nilai harus berupa angka 1–100."); return; }
+    if (form.id) aman(perbaruiDok(KOLEKSI.administrasi, form.id, form));
+    else aman(tambahDok(KOLEKSI.administrasi, form));
+    setForm(null);
+  };
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat bungkus">
+        <p className="keterangan">Lembar penilaian kinerja untuk Tenaga Administrasi — kriteria berbeda dari guru, skala 1–100.</p>
+        <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
+          <option value="Semua">Semua tenaga administrasi</option>
+          {pegawaiRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+        </select><Ikon I={ChevronDown} size={14} /></div>
+        <Tombol onClick={() => setForm({ guruId: pegawaiRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), kriteria: KRITERIA_ADMINISTRASI[0], nilai: "", catatan: "" })}>
+          <Ikon I={Plus} size={15} /> Catat Penilaian
+        </Tombol>
+      </div>
+
+      {pegawaiRelevan.length === 0 && <Kartu><Kosong pesan='Belum ada pegawai berkategori "Tenaga Administrasi". Tambahkan atau ubah kategorinya di tab Data Guru.' /></Kartu>}
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada penilaian administrasi pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Tanggal</th><th>Tenaga Administrasi</th><th>Kriteria</th><th className="ka">Nilai</th><th>Predikat</th><th>Catatan</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td className="nowrap teks-kecil">{fmtTgl(r.tanggal)}</td>
+                  <td><strong>{namaGuru(r.guruId)}</strong></td>
+                  <td className="teks-kecil">{r.kriteria}</td>
+                  <td className="ka"><strong style={{ color: warnaSkor100(Number(r.nilai)) }}>{r.nilai}</strong></td>
+                  <td><Lencana warna={warnaSkor100(Number(r.nilai))}>{labelSkor100(Number(r.nilai))}</Lencana></td>
+                  <td className="teks-kecil">{r.catatan || "-"}</td>
+                  <td className="aksi">
+                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
+                    <button className="btn-ikon bahaya" title="Hapus" onClick={() => window.confirm("Hapus penilaian ini?") && aman(hapusDok(KOLEKSI.administrasi, r.id))}><Ikon I={Trash2} size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Penilaian Administrasi" : "Catat Penilaian Kinerja Administrasi"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <div className="grid-2-form">
+              <Kolom label="Tenaga Administrasi" wajib>
+                <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
+                  {pegawaiRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                </select>
+              </Kolom>
+              <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
+            </div>
+            <Kolom label="Kriteria Penilaian" wajib>
+              <select value={form.kriteria} onChange={(e) => setForm({ ...form, kriteria: e.target.value })}>
+                {KRITERIA_ADMINISTRASI.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Nilai (1–100)" wajib>
+              <input type="number" min="1" max="100" value={form.nilai} onChange={(e) => setForm({ ...form, nilai: e.target.value })} placeholder="mis. 88" />
+            </Kolom>
+            <Kolom label="Catatan"><textarea rows={3} value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} /></Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 /* ================= TAB CATATAN KINERJA ================= */
 
 const IKON_CATATAN = { "Prestasi": Award, "Inovasi": Lightbulb, "Kedisiplinan": ShieldCheck, "Pembinaan": NotebookPen, "Pelanggaran Ringan": AlertTriangle };
@@ -1007,19 +1342,23 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
   const eksporGuru = () => {
     const baris = [
       ["LAPORAN KINERJA GURU"], [data.pengaturan.namaSekolah], [labelPeriode], [],
-      ["Nama", p.g.nama], ["NIK/NIP", p.g.nik], ["Mata Pelajaran", p.g.mapel],
-      ["Beban Mengajar (jam/minggu)", p.g.jam], ["Status", p.g.status], [],
+      ["Nama", p.g.nama], ["NIK/NIP", p.g.nik], ["Kategori", p.kategoriPegawai], ["Mapel/Jabatan", p.g.mapel],
+      ["Beban Kerja (jam/minggu)", p.g.jam], ["Status", p.g.status], [],
       ["TUGAS STRUKTURAL", `(bobot x${BOBOT.struktural})`], ["Jabatan", "SK", "Mulai", "Selesai", "Tupoksi", "Penilaian", "Skor"],
       ...p.str.map((r) => [r.jabatan, r.sk, r.mulai, r.selesai, r.tupoksi, labelNilai(r.nilai), Number(r.nilai) ? Number(r.nilai) * BOBOT.struktural : ""]), [],
       ["TUGAS INSIDENTAL", `(bobot x${BOBOT.insidental})`], ["Tanggal", "Kegiatan", "Peran", "Jam", "Kategori", "Catatan", "Penilaian", "Skor"],
       ...p.ins.map((r) => [r.tanggal, r.kegiatan, r.peran, r.jam, r.kategori, r.catatan, labelNilai(r.nilai), Number(r.nilai) ? Number(r.nilai) * BOBOT.insidental : ""]), [],
+      [p.kategoriPegawai === "Tenaga Administrasi" ? "PENILAIAN KINERJA ADMINISTRASI" : "SUPERVISI PEMBELAJARAN", "(skala 1-100)"],
+      p.kategoriPegawai === "Tenaga Administrasi" ? ["Tanggal", "Kriteria", "Nilai", "Catatan"] : ["Tanggal", "Tahapan", "Nilai", "Catatan"],
+      ...(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup).map((r) => [r.tanggal, r.kriteria || r.tahapan, r.nilai, r.catatan]), [],
       ["CATATAN KINERJA"], ["Tanggal", "Jenis", "Sifat", "Deskripsi", "Skor"],
       ...p.cat.map((r) => [r.tanggal, r.jenis, sifatCatatan(r), r.deskripsi, skorCatatanItem(r)]), [],
       ["REKAP SKOR"],
       ["Skor tugas struktural", p.skorStruktural],
       ["Skor tugas insidental", p.skorInsidental],
       ["Skor catatan kinerja", p.skorCatatan],
-      ["SKOR TOTAL", p.skorTotal],
+      ["SKOR TOTAL (struktural+insidental+catatan)", p.skorTotal],
+      [`Rata-rata ${p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (1-100)`, p.skorFungsional ?? "-"],
     ];
     unduhCSV(`laporan-${p.g.nama.split(",")[0].replace(/\W+/g, "-")}.csv`, baris);
   };
@@ -1027,10 +1366,10 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
   const eksporSemua = () => {
     const baris = [
       ["REKAP KINERJA SELURUH GURU", data.pengaturan.namaSekolah, labelPeriode], [],
-      ["Nama", "NIK/NIP", "Mapel", "Jam Mengajar", "Jml Tugas Struktural", "Rata2 Nilai Struktural", "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", "Tugas Belum Dinilai", "Jml Catatan", `Skor Struktural (x${BOBOT.struktural})`, `Skor Insidental (x${BOBOT.insidental})`, "Skor Catatan", "SKOR TOTAL"],
+      ["Nama", "Kategori", "NIK/NIP", "Mapel/Jabatan", "Jam", "Jml Tugas Struktural", "Rata2 Nilai Struktural", "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", "Tugas Belum Dinilai", "Jml Catatan", `Skor Struktural (x${BOBOT.struktural})`, `Skor Insidental (x${BOBOT.insidental})`, "Skor Catatan", "SKOR TOTAL", "Rata2 Supervisi/Administrasi (1-100)"],
       ...data.guru.map((g) => {
         const q = hitungProfil(g.id, data, ta, sem);
-        return [g.nama, g.nik, g.mapel, g.jam, q.str.length, q.rataStruktural ? q.rataStruktural.toFixed(2) : "", q.ins.length, q.rataInsidental ? q.rataInsidental.toFixed(2) : "", q.totalJamIns, q.belumDinilai, q.cat.length, q.skorStruktural, q.skorInsidental, q.skorCatatan, q.skorTotal];
+        return [g.nama, q.kategoriPegawai, g.nik, g.mapel, g.jam, q.str.length, q.rataStruktural ? q.rataStruktural.toFixed(2) : "", q.ins.length, q.rataInsidental ? q.rataInsidental.toFixed(2) : "", q.totalJamIns, q.belumDinilai, q.cat.length, q.skorStruktural, q.skorInsidental, q.skorCatatan, q.skorTotal, q.skorFungsional ?? ""];
       }),
     ];
     unduhCSV("rekap-kinerja-seluruh-guru.csv", baris);
@@ -1060,7 +1399,7 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
           <div className="laporan-kop">
             <div className="kepala-logo besar"><LogoSekolah size={52} /></div>
             <div>
-              <h2>Laporan Kinerja Guru — {labelPeriode}</h2>
+              <h2>Laporan Kinerja Pegawai — {labelPeriode}</h2>
               <p className="sub">{data.pengaturan.namaSekolah}</p>
             </div>
             <div className="skor-total">
@@ -1071,14 +1410,19 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
           <div className="laporan-identitas">
             <div><span>Nama</span><strong>{p.g.nama}</strong></div>
             <div><span>NIK/NIP</span><strong>{p.g.nik || "-"}</strong></div>
-            <div><span>Mapel</span><strong>{p.g.mapel}</strong></div>
-            <div><span>Beban Mengajar</span><strong>{p.g.jam} jam/minggu</strong></div>
+            <div><span>Kategori</span><strong>{p.kategoriPegawai}</strong></div>
+            <div><span>{p.kategoriPegawai === "Guru" ? "Mata Pelajaran" : "Jabatan/Bidang Tugas"}</span><strong>{p.g.mapel || "-"}</strong></div>
             <div><span>Status</span><strong>{p.g.status}</strong></div>
           </div>
           <div className="skor-rincian">
             <div><span>Struktural (bobot ×{BOBOT.struktural})</span><strong>{p.skorStruktural}</strong><em>Σ nilai × {BOBOT.struktural} · rata-rata {p.rataStruktural ? p.rataStruktural.toFixed(2) : "-"} dari {p.str.length} jabatan</em></div>
             <div><span>Insidental (bobot ×{BOBOT.insidental})</span><strong>{p.skorInsidental}</strong><em>Σ nilai × {BOBOT.insidental} · rata-rata {p.rataInsidental ? p.rataInsidental.toFixed(2) : "-"} dari {p.ins.length} tugas</em></div>
             <div><span>Catatan Kinerja</span><strong style={{ color: p.skorCatatan < 0 ? SIFAT_INFO.Negatif.warna : SIFAT_INFO.Positif.warna }}>{p.skorCatatan >= 0 ? "+" : ""}{p.skorCatatan}</strong><em>{p.cat.filter((r) => sifatCatatan(r) === "Positif").length} positif · {p.cat.filter((r) => sifatCatatan(r) === "Negatif").length} negatif</em></div>
+            <div style={{ background: p.skorFungsional === null ? undefined : `${warnaSkor100(p.skorFungsional)}18` }}>
+              <span>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (skala 1–100)</span>
+              <strong style={{ color: p.skorFungsional === null ? undefined : warnaSkor100(p.skorFungsional) }}>{p.skorFungsional ?? "-"}</strong>
+              <em>{p.skorFungsional === null ? "Belum ada penilaian" : labelSkor100(p.skorFungsional)}</em>
+            </div>
           </div>
           {p.belumDinilai > 0 && (
             <p className="peringatan-nilai">
@@ -1087,9 +1431,37 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
           )}
         </Kartu>
 
+        <Kartu>
+          <div className="kartu-kepala">
+            <h2>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Kinerja Administrasi" : "Hasil Supervisi Pembelajaran"}</h2>
+            <span className="sub">Skala 1–100 per {p.kategoriPegawai === "Tenaga Administrasi" ? "kriteria" : "tahapan"}</span>
+          </div>
+          {(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).every((d) => d.nilai === null) ? (
+            <Kosong pesan={`Belum ada penilaian ${p.kategoriPegawai === "Tenaga Administrasi" ? "administrasi" : "supervisi pembelajaran"} pada periode ini.`} />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart
+                data={(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).map((d) => ({ ...d, label: (d.kriteria || d.tahapan) }))}
+                layout="vertical" margin={{ left: 8, right: 30, top: 4, bottom: 4 }}
+              >
+                <CartesianGrid horizontal={false} stroke="#e4e8e2" />
+                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="label" width={220} tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Bar dataKey="nilai" radius={[0, 4, 4, 0]} barSize={22}>
+                  {(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).map((d, i) => (
+                    <Cell key={i} fill={d.nilai === null ? "#c7d0c9" : warnaSkor100(d.nilai)} />
+                  ))}
+                  <LabelList dataKey="nilai" position="right" formatter={(v) => (v === null || v === undefined ? "-" : v)} style={{ fontSize: 12, fontWeight: 700 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Kartu>
+
         <div className="grid-2">
           <Kartu>
-            <div className="kartu-kepala"><h2>Profil Kinerja</h2><span className="sub">Enam dimensi (skala 0–100)</span></div>
+            <div className="kartu-kepala"><h2>Profil Kinerja</h2><span className="sub">Skala 0–100 per dimensi</span></div>
             <ResponsiveContainer width="100%" height={280}>
               <RadarChart data={p.radar} outerRadius="72%">
                 <PolarGrid stroke="#dfe5dc" />
@@ -1398,7 +1770,7 @@ function Gaya() {
     }
     .laporan-identitas span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--redup); }
     .laporan-identitas strong { font-size: 13.5px; }
-    .skor-rincian { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+    .skor-rincian { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 14px; }
     @media (max-width: 640px) { .skor-rincian { grid-template-columns: 1fr; } }
     .skor-rincian > div { background: var(--hijau-muda); border-radius: 9px; padding: 10px 14px; }
     .skor-rincian span { font-size: 11.5px; color: var(--redup); display: block; }

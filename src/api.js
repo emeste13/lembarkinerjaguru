@@ -1,8 +1,3 @@
-// ============================================================
-// LAPISAN DATA — Firestore realtime + Firebase Authentication
-// Tidak perlu diubah. Semua komponen memakai fungsi dari sini.
-// ============================================================
-
 import { initializeApp, deleteApp } from "firebase/app";
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -20,9 +15,9 @@ export const KOLEKSI = {
   struktural: "tugasStruktural",
   insidental: "tugasInsidental",
   catatan: "catatanKinerja",
+  supervisi: "supervisiPembelajaran",
+  administrasi: "penilaianAdministrasi",
 };
-
-/* ---------- Autentikasi ---------- */
 
 export const masuk = (email, password) => signInWithEmailAndPassword(auth, email, password);
 export const keluar = () => signOut(auth);
@@ -48,7 +43,6 @@ export const gantiPasswordSendiri = async (passwordLama, passwordBaru) => {
   await updatePassword(user, passwordBaru);
 };
 
-// Membuat akun guru TANPA memutus sesi admin: pakai instans Firebase kedua sementara.
 export const buatAkunGuru = async ({ email, password, guruId, nama }) => {
   const appKedua = initializeApp(firebaseConfig, "pembuatan-akun-" + Date.now());
   try {
@@ -64,13 +58,11 @@ export const buatAkunGuru = async ({ email, password, guruId, nama }) => {
   }
 };
 
-/* ---------- Langganan data realtime ---------- */
-
 export const langgananData = (sesi, cb) => {
   const stops = [];
-  const state = { guru: [], struktural: [], insidental: [], catatan: [], pengaturan: { namaSekolah: "SMP Al Hikmah IIBS Batu", ta: "2026/2027" } };
+  const state = { guru: [], struktural: [], insidental: [], catatan: [], supervisi: [], administrasi: [], pengaturan: { namaSekolah: "SMP Al Hikmah IIBS Batu", ta: "2026/2027" } };
   const kePeta = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const kirim = () => cb({ ...state, guru: [...state.guru], struktural: [...state.struktural], insidental: [...state.insidental], catatan: [...state.catatan] });
+  const kirim = () => cb({ ...state, guru: [...state.guru], struktural: [...state.struktural], insidental: [...state.insidental], catatan: [...state.catatan], supervisi: [...state.supervisi], administrasi: [...state.administrasi] });
 
   stops.push(onSnapshot(doc(db, "pengaturan", "utama"), (s) => {
     if (s.exists()) state.pengaturan = { ...state.pengaturan, ...s.data() };
@@ -82,6 +74,8 @@ export const langgananData = (sesi, cb) => {
     stops.push(onSnapshot(collection(db, KOLEKSI.struktural), (s) => { state.struktural = kePeta(s); kirim(); }));
     stops.push(onSnapshot(collection(db, KOLEKSI.insidental), (s) => { state.insidental = kePeta(s); kirim(); }));
     stops.push(onSnapshot(collection(db, KOLEKSI.catatan), (s) => { state.catatan = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(collection(db, KOLEKSI.supervisi), (s) => { state.supervisi = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(collection(db, KOLEKSI.administrasi), (s) => { state.administrasi = kePeta(s); kirim(); }));
   } else if (sesi.peran === "guru" && sesi.guruId) {
     const gid = sesi.guruId;
     stops.push(onSnapshot(doc(db, KOLEKSI.guru, gid), (s) => {
@@ -91,14 +85,14 @@ export const langgananData = (sesi, cb) => {
     stops.push(onSnapshot(q(KOLEKSI.struktural), (s) => { state.struktural = kePeta(s); kirim(); }));
     stops.push(onSnapshot(q(KOLEKSI.insidental), (s) => { state.insidental = kePeta(s); kirim(); }));
     stops.push(onSnapshot(q(KOLEKSI.catatan), (s) => { state.catatan = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(q(KOLEKSI.supervisi), (s) => { state.supervisi = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(q(KOLEKSI.administrasi), (s) => { state.administrasi = kePeta(s); kirim(); }));
   }
   return () => stops.forEach((stop) => stop());
 };
 
 export const langgananUsers = (cb) =>
   onSnapshot(collection(db, "users"), (s) => cb(s.docs.map((d) => ({ uid: d.id, ...d.data() }))), () => cb([]));
-
-/* ---------- Operasi tulis (khusus admin, ditegakkan Rules) ---------- */
 
 const bersih = (obj) => {
   const { id, ...sisa } = obj;
@@ -113,7 +107,7 @@ export const simpanPengaturan = (patch) => setDoc(doc(db, "pengaturan", "utama")
 
 export const hapusGuruMenyeluruh = async (guruId) => {
   const batch = writeBatch(db);
-  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan]) {
+  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan, KOLEKSI.supervisi, KOLEKSI.administrasi]) {
     const s = await getDocs(query(collection(db, kol), where("guruId", "==", guruId)));
     s.docs.forEach((d) => batch.delete(d.ref));
   }
