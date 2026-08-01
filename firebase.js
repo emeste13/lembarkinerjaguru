@@ -14,7 +14,17 @@ export const firebaseConfig = {
   projectId: "ISI_PROJECT_ID",
   storageBucket: "ISI_PROJECT_ID.appspot.com",
   messagingSenderId: "ISI_SENDER_ID",
-  appId: "ISI_APP_ID",
+  appId: "// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyApHpLT8A8yRkm8NFJa8pO2D2nsR_qriWc",
+  authDomain: "lembar-kinerja-guru-smphbs.firebaseapp.com",
+  databaseURL: "https://lembar-kinerja-guru-smphbs-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "lembar-kinerja-guru-smphbs",
+  storageBucket: "lembar-kinerja-guru-smphbs.firebasestorage.app",
+  messagingSenderId: "233229540259",
+  appId: "1:233229540259:web:0b363184476db6e8b85816",
+  measurementId: "G-Q6Y6REJE7R"
+};",
 };
 
 const app = initializeApp(firebaseConfig);
