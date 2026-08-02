@@ -34,6 +34,9 @@ const NILAI_CATATAN = [
   { nilai: 1, label: "Bermasalah", warna: "#b23a3a", latar: "#fbecec" },
 ];
 const infoNilaiCatatan = (n) => NILAI_CATATAN.find((x) => x.nilai === Number(n)) || NILAI_CATATAN[2];
+// Untuk nilai rata-rata yang bisa pecahan (mis. 4.3) — dibulatkan ke pita warna terdekat
+const warnaRataSkala5 = (n) => (n === null || n === undefined ? "#8a948c" : n >= 4.5 ? "#1a5632" : n >= 3.5 ? "#3f8f5b" : n >= 2.5 ? "#c2912e" : n >= 1.5 ? "#c9702f" : "#b23a3a");
+const labelRataSkala5 = (n) => (n === null || n === undefined ? "Belum dinilai" : n >= 4.5 ? "Sangat Baik" : n >= 3.5 ? "Baik" : n >= 2.5 ? "Cukup / Standar" : n >= 1.5 ? "Kurang" : "Bermasalah");
 // Skor: 5→+4, 4→+2, 3→0, 2→−2, 1→−4 — simetris di sekitar "standar"
 const skorCatatanItem = (r) => (Number(r.nilai || 3) - 3) * 2;
 
@@ -46,15 +49,14 @@ const KETERANGAN_NILAI_CATATAN = {
   1: "Tidak dikerjakan, melanggar, atau terlambat",
 };
 
-// Penilaian tugas oleh Kepala Sekolah + bobot akumulasi
-const PENILAIAN = [
-  { nilai: 4, label: "Sangat Baik" },
-  { nilai: 3, label: "Baik" },
-  { nilai: 2, label: "Cukup" },
-  { nilai: 1, label: "Kurang" },
-];
+// ============================================================
+// SKALA PENILAIAN UNIVERSAL — dipakai di SEMUA modul: Tugas Struktural,
+// Tugas Insidental, Supervisi Pembelajaran, Penilaian Administrasi, Catatan Kinerja.
+// Satu skala yang sama supaya Kepala Sekolah tidak perlu berpindah logika penilaian.
+// ============================================================
+const PENILAIAN = NILAI_CATATAN; // alias historis, tetap dipakai di beberapa tempat
 const BOBOT = { struktural: 5, insidental: 2 }; // struktural berbobot lebih tinggi
-const labelNilai = (n) => PENILAIAN.find((p) => p.nilai === n)?.label || "Belum dinilai";
+const labelNilai = (n) => infoNilaiCatatan(n)?.label && Number(n) >= 1 && Number(n) <= 5 ? infoNilaiCatatan(n).label : "Belum dinilai";
 
 const BULAN_TA = ["Jul", "Agu", "Sep", "Okt", "Nov", "Des", "Jan", "Feb", "Mar", "Apr", "Mei", "Jun"];
 const STATUS_PEG = ["GTY (Guru Tetap Yayasan)", "GTTY (Guru Tidak Tetap)", "PNS DPK", "Kontrak"];
@@ -63,15 +65,12 @@ const STATUS_PEG = ["GTY (Guru Tetap Yayasan)", "GTTY (Guru Tidak Tetap)", "PNS 
 const KATEGORI_PEGAWAI = ["Guru", "Tenaga Kependidikan", "Tenaga Administrasi"];
 const bukanAdministrasi = (g) => (g?.kategori || "Guru") !== "Tenaga Administrasi";
 
-// Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — skala 1–100
+// Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — skala 1–5
 const TAHAPAN_SUPERVISI = ["Validasi Modul/Perencanaan Pembelajaran", "Pelaksanaan Pembelajaran", "Refleksi"];
 
-// Penilaian Kinerja Administrasi (Tenaga Administrasi) — skala 1–100
+// Penilaian Kinerja Administrasi (Tenaga Administrasi) — skala 1–5
 const KRITERIA_ADMINISTRASI = ["Kedisiplinan & Kehadiran", "Ketelitian & Akurasi Kerja", "Pelayanan & Responsivitas", "Inisiatif & Kerja Sama", "Penguasaan Sistem/Administrasi"];
 
-// Pita warna untuk skor 1–100
-const warnaSkor100 = (n) => (n >= 85 ? "#1a5632" : n >= 70 ? "#2e7d4f" : n >= 55 ? "#c2912e" : "#b23a3a");
-const labelSkor100 = (n) => (n >= 85 ? "Sangat Baik" : n >= 70 ? "Baik" : n >= 55 ? "Cukup" : "Kurang");
 
 /* ================= UTILITAS ================= */
 
@@ -180,9 +179,9 @@ const Lencana = ({ warna, children }) => (
   <span className="lencana" style={{ background: `${warna}18`, color: warna, borderColor: `${warna}55` }}>{children}</span>
 );
 
-const NILAI_WARNA = { 4: "#1a5632", 3: "#2e7d4f", 2: "#c2912e", 1: "#b23a3a", 0: "#8a948c" };
+const NILAI_WARNA = { 5: "#1a5632", 4: "#3f8f5b", 3: "#c2912e", 2: "#c9702f", 1: "#b23a3a", 0: "#8a948c" };
 
-// Dropdown penilaian sekali klik — Kepala Sekolah cukup memilih dari daftar
+// Dropdown penilaian sekali klik — Kepala Sekolah cukup memilih dari daftar (skala 1–5, sama di semua modul)
 const NilaiPilih = ({ nilai, onUbah, judul = "Penilaian Kepala Sekolah" }) => (
   <select
     className="nilai-pilih" title={judul} aria-label={judul}
@@ -191,13 +190,41 @@ const NilaiPilih = ({ nilai, onUbah, judul = "Penilaian Kepala Sekolah" }) => (
     onChange={(e) => onUbah(e.target.value ? Number(e.target.value) : null)}
   >
     <option value="">Belum dinilai</option>
-    {PENILAIAN.map((p) => <option key={p.nilai} value={p.nilai}>{p.label} ({p.nilai})</option>)}
+    {PENILAIAN.map((p) => <option key={p.nilai} value={p.nilai}>{p.nilai} — {p.label}</option>)}
   </select>
 );
 
 const LencanaNilai = ({ nilai }) => (
-  <Lencana warna={NILAI_WARNA[nilai || 0]}>{labelNilai(nilai)}{nilai ? ` (${nilai})` : ""}</Lencana>
+  <Lencana warna={NILAI_WARNA[nilai || 0]}>{nilai ? `${nilai} — ` : ""}{labelNilai(nilai)}</Lencana>
 );
+
+// Pemilih skala 1–5 bergradasi warna — dipakai di Tugas Struktural/Insidental (dalam modal),
+// Supervisi Pembelajaran, Penilaian Administrasi, dan Catatan Kinerja. Satu tampilan untuk semua.
+const PemilihSkala5 = ({ nilai, onUbah, keterangan = KETERANGAN_NILAI_CATATAN }) => (
+  <div>
+    <div className="nilai-catatan-pilih">
+      {NILAI_CATATAN.map((n) => {
+        const aktif = Number(nilai) === n.nilai;
+        return (
+          <button key={n.nilai} type="button"
+            className={`nilai-catatan-tombol ${aktif ? "aktif" : ""}`}
+            style={aktif ? { background: n.warna, borderColor: n.warna, color: "#fff" } : { color: n.warna, borderColor: `${n.warna}66`, background: n.latar }}
+            onClick={() => onUbah(n.nilai)}
+            title={keterangan[n.nilai]}>
+            <strong>{n.nilai}</strong>
+            <span>{n.label}</span>
+          </button>
+        );
+      })}
+    </div>
+    {nilai && keterangan[nilai] && <p className="teks-kecil" style={{ marginTop: 6 }}>{keterangan[nilai]}</p>}
+  </div>
+);
+
+const LencanaSkala5 = ({ nilai }) => {
+  const info = infoNilaiCatatan(nilai);
+  return <Lencana warna={info.warna}>{nilai} — {info.label}</Lencana>;
+};
 
 /* ================= PERHITUNGAN SKOR ================= */
 
@@ -222,7 +249,7 @@ const hitungProfil = (guruId, data, ta, sem) => {
 
   const nCat = (j) => cat.filter((r) => r.jenis === j).length;
 
-  // Akumulasi penilaian KS: skor tugas = nilai (1–4) × bobot. Struktural berbobot lebih tinggi.
+  // Akumulasi penilaian KS: skor tugas = nilai (1–5) × bobot. Struktural berbobot lebih tinggi.
   const strDinilai = str.filter((r) => Number(r.nilai) > 0);
   const insDinilai = ins.filter((r) => Number(r.nilai) > 0);
   const skorStruktural = strDinilai.reduce((a, r) => a + Number(r.nilai) * BOBOT.struktural, 0);
@@ -234,38 +261,38 @@ const hitungProfil = (guruId, data, ta, sem) => {
   const rataStruktural = rata(strDinilai);
   const rataInsidental = rata(insDinilai);
 
-  // Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — rata-rata per tahapan, skala 1–100
+  // Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — rata-rata per tahapan, skala 1–5
   const perTahapanSupervisi = TAHAPAN_SUPERVISI.map((t) => {
     const l = sup.filter((r) => r.tahapan === t);
-    return { tahapan: t, nilai: l.length ? Math.round(rata(l)) : null, jumlah: l.length };
+    return { tahapan: t, nilai: l.length ? Math.round(rata(l) * 10) / 10 : null, jumlah: l.length };
   });
-  const rataSupervisi = sup.length ? Math.round(rata(sup)) : null;
+  const rataSupervisi = sup.length ? Math.round(rata(sup) * 10) / 10 : null;
 
-  // Penilaian Kinerja Administrasi (Tenaga Administrasi) — rata-rata per kriteria, skala 1–100
+  // Penilaian Kinerja Administrasi (Tenaga Administrasi) — rata-rata per kriteria, skala 1–5
   const perKriteriaAdministrasi = KRITERIA_ADMINISTRASI.map((k) => {
     const l = adm.filter((r) => r.kriteria === k);
-    return { kriteria: k, nilai: l.length ? Math.round(rata(l)) : null, jumlah: l.length };
+    return { kriteria: k, nilai: l.length ? Math.round(rata(l) * 10) / 10 : null, jumlah: l.length };
   });
-  const rataAdministrasi = adm.length ? Math.round(rata(adm)) : null;
+  const rataAdministrasi = adm.length ? Math.round(rata(adm) * 10) / 10 : null;
 
   const kategoriPegawai = g?.kategori || "Guru";
   const skorFungsional = kategoriPegawai === "Tenaga Administrasi" ? rataAdministrasi : rataSupervisi;
 
-  // Radar 0–100 sederhana
+  // Radar 0–100 sederhana (semua komponen penilaian kini berskala 1–5, dikonversi ke 0–100 untuk radar)
   const radar = kategoriPegawai === "Tenaga Administrasi"
     ? [
-        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 4) * 70 + str.length * 15)) },
-        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 4) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 5) * 70 + str.length * 15)) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 5) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
         { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
-        ...perKriteriaAdministrasi.filter((k) => k.nilai !== null).map((k) => ({ dimensi: k.kriteria.split(" ")[0], nilai: k.nilai })),
+        ...perKriteriaAdministrasi.filter((k) => k.nilai !== null).map((k) => ({ dimensi: k.kriteria.split(" ")[0], nilai: Math.round((k.nilai / 5) * 100) })),
       ]
     : [
         { dimensi: "Beban Mengajar", nilai: Math.min(100, Math.round(((g?.jam || 0) / 24) * 100)) },
-        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 4) * 70 + str.length * 15)) },
-        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 4) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 5) * 70 + str.length * 15)) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 5) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
         { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
         { dimensi: "Inovasi", nilai: Math.min(100, nCat("Inovasi") * 30) },
-        { dimensi: "Supervisi Pembelajaran", nilai: rataSupervisi ?? 0 },
+        { dimensi: "Supervisi Pembelajaran", nilai: rataSupervisi === null ? 0 : Math.round((rataSupervisi / 5) * 100) },
       ];
 
   return {
@@ -1087,9 +1114,7 @@ function TabSupervisi({ data, ta, sem }) {
     .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
 
   const simpan = () => {
-    if (!form.guruId || !form.tanggal || !form.tahapan) return;
-    const n = Number(form.nilai);
-    if (!Number.isFinite(n) || n < 1 || n > 100) { window.alert("Nilai harus berupa angka 1–100."); return; }
+    if (!form.guruId || !form.tanggal || !form.tahapan || !form.nilai) return;
     if (form.id) aman(perbaruiDok(KOLEKSI.supervisi, form.id, form));
     else aman(tambahDok(KOLEKSI.supervisi, form));
     setForm(null);
@@ -1098,12 +1123,12 @@ function TabSupervisi({ data, ta, sem }) {
   return (
     <div className="susun-v">
       <div className="baris-alat bungkus">
-        <p className="keterangan">Penilaian fungsional hasil supervisi pembelajaran untuk Guru & Tenaga Kependidikan — tiga tahapan, skala 1–100.</p>
+        <p className="keterangan">Penilaian fungsional hasil supervisi pembelajaran untuk Guru & Tenaga Kependidikan — tiga tahapan, skala 1–5.</p>
         <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
           <option value="Semua">Semua pegawai</option>
           {guruRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
         </select><Ikon I={ChevronDown} size={14} /></div>
-        <Tombol onClick={() => setForm({ guruId: guruRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), tahapan: TAHAPAN_SUPERVISI[0], nilai: "", catatan: "" })}>
+        <Tombol onClick={() => setForm({ guruId: guruRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), tahapan: TAHAPAN_SUPERVISI[0], nilai: null, catatan: "" })}>
           <Ikon I={Plus} size={15} /> Catat Hasil Supervisi
         </Tombol>
       </div>
@@ -1113,15 +1138,14 @@ function TabSupervisi({ data, ta, sem }) {
       <Kartu>
         {daftar.length === 0 ? <Kosong pesan="Belum ada hasil supervisi pada filter ini." /> : (
           <div className="tabel-bungkus"><table>
-            <thead><tr><th>Tanggal</th><th>Pegawai</th><th>Tahapan</th><th className="ka">Nilai</th><th>Predikat</th><th>Catatan</th><th></th></tr></thead>
+            <thead><tr><th>Tanggal</th><th>Pegawai</th><th>Tahapan</th><th>Penilaian</th><th>Catatan</th><th></th></tr></thead>
             <tbody>
               {daftar.map((r) => (
                 <tr key={r.id}>
                   <td className="nowrap teks-kecil">{fmtTgl(r.tanggal)}</td>
                   <td><strong>{namaGuru(r.guruId)}</strong></td>
                   <td className="teks-kecil">{r.tahapan}</td>
-                  <td className="ka"><strong style={{ color: warnaSkor100(Number(r.nilai)) }}>{r.nilai}</strong></td>
-                  <td><Lencana warna={warnaSkor100(Number(r.nilai))}>{labelSkor100(Number(r.nilai))}</Lencana></td>
+                  <td><LencanaSkala5 nilai={r.nilai} /></td>
                   <td className="teks-kecil">{r.catatan || "-"}</td>
                   <td className="aksi">
                     <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
@@ -1150,8 +1174,8 @@ function TabSupervisi({ data, ta, sem }) {
                 {TAHAPAN_SUPERVISI.map((t) => <option key={t}>{t}</option>)}
               </select>
             </Kolom>
-            <Kolom label="Nilai (1–100)" wajib>
-              <input type="number" min="1" max="100" value={form.nilai} onChange={(e) => setForm({ ...form, nilai: e.target.value })} placeholder="mis. 85" />
+            <Kolom label="Nilai (1–5)" wajib>
+              <PemilihSkala5 nilai={form.nilai} onUbah={(n) => setForm({ ...form, nilai: n })} />
             </Kolom>
             <Kolom label="Catatan hasil supervisi"><textarea rows={3} value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} /></Kolom>
           </div>
@@ -1180,9 +1204,7 @@ function TabAdministrasi({ data, ta, sem }) {
     .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
 
   const simpan = () => {
-    if (!form.guruId || !form.tanggal || !form.kriteria) return;
-    const n = Number(form.nilai);
-    if (!Number.isFinite(n) || n < 1 || n > 100) { window.alert("Nilai harus berupa angka 1–100."); return; }
+    if (!form.guruId || !form.tanggal || !form.kriteria || !form.nilai) return;
     if (form.id) aman(perbaruiDok(KOLEKSI.administrasi, form.id, form));
     else aman(tambahDok(KOLEKSI.administrasi, form));
     setForm(null);
@@ -1191,12 +1213,12 @@ function TabAdministrasi({ data, ta, sem }) {
   return (
     <div className="susun-v">
       <div className="baris-alat bungkus">
-        <p className="keterangan">Lembar penilaian kinerja untuk Tenaga Administrasi — kriteria berbeda dari guru, skala 1–100.</p>
+        <p className="keterangan">Lembar penilaian kinerja untuk Tenaga Administrasi — kriteria berbeda dari guru, skala 1–5.</p>
         <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
           <option value="Semua">Semua tenaga administrasi</option>
           {pegawaiRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
         </select><Ikon I={ChevronDown} size={14} /></div>
-        <Tombol onClick={() => setForm({ guruId: pegawaiRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), kriteria: KRITERIA_ADMINISTRASI[0], nilai: "", catatan: "" })}>
+        <Tombol onClick={() => setForm({ guruId: pegawaiRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), kriteria: KRITERIA_ADMINISTRASI[0], nilai: null, catatan: "" })}>
           <Ikon I={Plus} size={15} /> Catat Penilaian
         </Tombol>
       </div>
@@ -1206,15 +1228,14 @@ function TabAdministrasi({ data, ta, sem }) {
       <Kartu>
         {daftar.length === 0 ? <Kosong pesan="Belum ada penilaian administrasi pada filter ini." /> : (
           <div className="tabel-bungkus"><table>
-            <thead><tr><th>Tanggal</th><th>Tenaga Administrasi</th><th>Kriteria</th><th className="ka">Nilai</th><th>Predikat</th><th>Catatan</th><th></th></tr></thead>
+            <thead><tr><th>Tanggal</th><th>Tenaga Administrasi</th><th>Kriteria</th><th>Penilaian</th><th>Catatan</th><th></th></tr></thead>
             <tbody>
               {daftar.map((r) => (
                 <tr key={r.id}>
                   <td className="nowrap teks-kecil">{fmtTgl(r.tanggal)}</td>
                   <td><strong>{namaGuru(r.guruId)}</strong></td>
                   <td className="teks-kecil">{r.kriteria}</td>
-                  <td className="ka"><strong style={{ color: warnaSkor100(Number(r.nilai)) }}>{r.nilai}</strong></td>
-                  <td><Lencana warna={warnaSkor100(Number(r.nilai))}>{labelSkor100(Number(r.nilai))}</Lencana></td>
+                  <td><LencanaSkala5 nilai={r.nilai} /></td>
                   <td className="teks-kecil">{r.catatan || "-"}</td>
                   <td className="aksi">
                     <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
@@ -1243,8 +1264,8 @@ function TabAdministrasi({ data, ta, sem }) {
                 {KRITERIA_ADMINISTRASI.map((k) => <option key={k}>{k}</option>)}
               </select>
             </Kolom>
-            <Kolom label="Nilai (1–100)" wajib>
-              <input type="number" min="1" max="100" value={form.nilai} onChange={(e) => setForm({ ...form, nilai: e.target.value })} placeholder="mis. 88" />
+            <Kolom label="Nilai (1–5)" wajib>
+              <PemilihSkala5 nilai={form.nilai} onUbah={(n) => setForm({ ...form, nilai: n })} />
             </Kolom>
             <Kolom label="Catatan"><textarea rows={3} value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} /></Kolom>
           </div>
@@ -1336,22 +1357,7 @@ function TabCatatan({ data, ta, sem }) {
               </select>
             </Kolom>
             <Kolom label="Nilai (1–5)" wajib>
-              <div className="nilai-catatan-pilih">
-                {NILAI_CATATAN.map((n) => {
-                  const aktif = Number(form.nilai) === n.nilai;
-                  return (
-                    <button key={n.nilai} type="button"
-                      className={`nilai-catatan-tombol ${aktif ? "aktif" : ""}`}
-                      style={aktif ? { background: n.warna, borderColor: n.warna, color: "#fff" } : { color: n.warna, borderColor: `${n.warna}66`, background: n.latar }}
-                      onClick={() => setForm({ ...form, nilai: n.nilai })}
-                      title={KETERANGAN_NILAI_CATATAN[n.nilai]}>
-                      <strong>{n.nilai}</strong>
-                      <span>{n.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {form.nilai && <p className="teks-kecil" style={{ marginTop: 6 }}>{KETERANGAN_NILAI_CATATAN[form.nilai]}</p>}
+              <PemilihSkala5 nilai={form.nilai} onUbah={(n) => setForm({ ...form, nilai: n })} />
             </Kolom>
             <Kolom label="Deskripsi" wajib><textarea rows={3} value={form.deskripsi} onChange={(e) => setForm({ ...form, deskripsi: e.target.value })} /></Kolom>
             <Kolom label="Tautan bukti / dokumentasi"><input value={form.bukti} onChange={(e) => setForm({ ...form, bukti: e.target.value })} placeholder="https://…" /></Kolom>
@@ -1390,7 +1396,7 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
       ...p.str.map((r) => [r.jabatan, r.sk, r.mulai, r.selesai, r.tupoksi, labelNilai(r.nilai), Number(r.nilai) ? Number(r.nilai) * BOBOT.struktural : ""]), [],
       ["TUGAS INSIDENTAL", `(bobot x${BOBOT.insidental})`], ["Tanggal", "Kegiatan", "Peran", "Jam", "Kategori", "Catatan", "Penilaian", "Skor"],
       ...p.ins.map((r) => [r.tanggal, r.kegiatan, r.peran, r.jam, r.kategori, r.catatan, labelNilai(r.nilai), Number(r.nilai) ? Number(r.nilai) * BOBOT.insidental : ""]), [],
-      [p.kategoriPegawai === "Tenaga Administrasi" ? "PENILAIAN KINERJA ADMINISTRASI" : "SUPERVISI PEMBELAJARAN", "(skala 1-100)"],
+      [p.kategoriPegawai === "Tenaga Administrasi" ? "PENILAIAN KINERJA ADMINISTRASI" : "SUPERVISI PEMBELAJARAN", "(skala 1-5)"],
       p.kategoriPegawai === "Tenaga Administrasi" ? ["Tanggal", "Kriteria", "Nilai", "Catatan"] : ["Tanggal", "Tahapan", "Nilai", "Catatan"],
       ...(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup).map((r) => [r.tanggal, r.kriteria || r.tahapan, r.nilai, r.catatan]), [],
       ["CATATAN KINERJA"], ["Tanggal", "Jenis", "Nilai", "Predikat", "Deskripsi", "Skor"],
@@ -1400,7 +1406,7 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
       ["Skor tugas insidental", p.skorInsidental],
       ["Skor catatan kinerja", p.skorCatatan],
       ["SKOR TOTAL (struktural+insidental+catatan)", p.skorTotal],
-      [`Rata-rata ${p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (1-100)`, p.skorFungsional ?? "-"],
+      [`Rata-rata ${p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (1-5)`, p.skorFungsional ?? "-"],
     ];
     unduhCSV(`laporan-${p.g.nama.split(",")[0].replace(/\W+/g, "-")}.csv`, baris);
   };
@@ -1408,7 +1414,7 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
   const eksporSemua = () => {
     const baris = [
       ["REKAP KINERJA SELURUH GURU", data.pengaturan.namaSekolah, labelPeriode], [],
-      ["Nama", "Kategori", "NIK/NIP", "Mapel/Jabatan", "Jam", "Jml Tugas Struktural", "Rata2 Nilai Struktural", "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", "Tugas Belum Dinilai", "Jml Catatan", `Skor Struktural (x${BOBOT.struktural})`, `Skor Insidental (x${BOBOT.insidental})`, "Skor Catatan", "SKOR TOTAL", "Rata2 Supervisi/Administrasi (1-100)"],
+      ["Nama", "Kategori", "NIK/NIP", "Mapel/Jabatan", "Jam", "Jml Tugas Struktural", "Rata2 Nilai Struktural", "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", "Tugas Belum Dinilai", "Jml Catatan", `Skor Struktural (x${BOBOT.struktural})`, `Skor Insidental (x${BOBOT.insidental})`, "Skor Catatan", "SKOR TOTAL", "Rata2 Supervisi/Administrasi (1-5)"],
       ...urutkanNama(data.guru).map((g) => {
         const q = hitungProfil(g.id, data, ta, sem);
         return [g.nama, q.kategoriPegawai, g.nik, g.mapel, g.jam, q.str.length, q.rataStruktural ? q.rataStruktural.toFixed(2) : "", q.ins.length, q.rataInsidental ? q.rataInsidental.toFixed(2) : "", q.totalJamIns, q.belumDinilai, q.cat.length, q.skorStruktural, q.skorInsidental, q.skorCatatan, q.skorTotal, q.skorFungsional ?? ""];
@@ -1459,15 +1465,15 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
           <div className="skor-rincian">
             <div><span>Struktural (bobot ×{BOBOT.struktural})</span><strong>{p.skorStruktural}</strong><em>Σ nilai × {BOBOT.struktural} · rata-rata {p.rataStruktural ? p.rataStruktural.toFixed(2) : "-"} dari {p.str.length} jabatan</em></div>
             <div><span>Insidental (bobot ×{BOBOT.insidental})</span><strong>{p.skorInsidental}</strong><em>Σ nilai × {BOBOT.insidental} · rata-rata {p.rataInsidental ? p.rataInsidental.toFixed(2) : "-"} dari {p.ins.length} tugas</em></div>
-            <div style={{ background: p.cat.length ? `${warnaSkor100(Math.round((p.cat.reduce((a, r) => a + Number(r.nilai || 3), 0) / p.cat.length) * 20))}18` : undefined }}>
+            <div style={{ background: p.cat.length ? `${warnaRataSkala5(p.cat.reduce((a, r) => a + Number(r.nilai || 3), 0) / p.cat.length)}18` : undefined }}>
               <span>Catatan Kinerja</span>
               <strong style={{ color: p.skorCatatan < 0 ? "#b23a3a" : p.skorCatatan > 0 ? "#1a5632" : undefined }}>{p.skorCatatan >= 0 ? "+" : ""}{p.skorCatatan}</strong>
               <em>{p.cat.filter((r) => Number(r.nilai) >= 4).length} baik/sgt.baik · {p.cat.filter((r) => Number(r.nilai) === 3).length} standar · {p.cat.filter((r) => Number(r.nilai) <= 2).length} bermasalah</em>
             </div>
-            <div style={{ background: p.skorFungsional === null ? undefined : `${warnaSkor100(p.skorFungsional)}18` }}>
-              <span>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (skala 1–100)</span>
-              <strong style={{ color: p.skorFungsional === null ? undefined : warnaSkor100(p.skorFungsional) }}>{p.skorFungsional ?? "-"}</strong>
-              <em>{p.skorFungsional === null ? "Belum ada penilaian" : labelSkor100(p.skorFungsional)}</em>
+            <div style={{ background: p.skorFungsional === null ? undefined : `${warnaRataSkala5(p.skorFungsional)}18` }}>
+              <span>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (skala 1–5)</span>
+              <strong style={{ color: p.skorFungsional === null ? undefined : warnaRataSkala5(p.skorFungsional) }}>{p.skorFungsional ?? "-"}</strong>
+              <em>{labelRataSkala5(p.skorFungsional)}</em>
             </div>
           </div>
           {p.belumDinilai > 0 && (
@@ -1480,7 +1486,7 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
         <Kartu>
           <div className="kartu-kepala">
             <h2>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Kinerja Administrasi" : "Hasil Supervisi Pembelajaran"}</h2>
-            <span className="sub">Skala 1–100 per {p.kategoriPegawai === "Tenaga Administrasi" ? "kriteria" : "tahapan"}</span>
+            <span className="sub">Skala 1–5 per {p.kategoriPegawai === "Tenaga Administrasi" ? "kriteria" : "tahapan"}</span>
           </div>
           {(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).every((d) => d.nilai === null) ? (
             <Kosong pesan={`Belum ada penilaian ${p.kategoriPegawai === "Tenaga Administrasi" ? "administrasi" : "supervisi pembelajaran"} pada periode ini.`} />
@@ -1491,12 +1497,12 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
                 layout="vertical" margin={{ left: 8, right: 30, top: 4, bottom: 4 }}
               >
                 <CartesianGrid horizontal={false} stroke="#e4e8e2" />
-                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="label" width={220} tick={{ fontSize: 11 }} />
                 <Tooltip />
                 <Bar dataKey="nilai" radius={[0, 4, 4, 0]} barSize={22}>
                   {(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).map((d, i) => (
-                    <Cell key={i} fill={d.nilai === null ? "#c7d0c9" : warnaSkor100(d.nilai)} />
+                    <Cell key={i} fill={d.nilai === null ? "#c7d0c9" : warnaRataSkala5(d.nilai)} />
                   ))}
                   <LabelList dataKey="nilai" position="right" formatter={(v) => (v === null || v === undefined ? "-" : v)} style={{ fontSize: 12, fontWeight: 700 }} />
                 </Bar>
