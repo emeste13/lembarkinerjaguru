@@ -3,6 +3,7 @@ import {
   masuk, keluar, pantauSesi, kirimResetPassword, gantiPasswordSendiri,
   buatAkunGuru, langgananData, langgananUsers,
   tambahDok, perbaruiDok, hapusDok, hapusGuruMenyeluruh, simpanPengaturan, KOLEKSI,
+  ajukanPenilaianAkhlak, validasiPenilaianAkhlak, bukaKembaliPenilaianAkhlak, idAkhlak,
 } from "./api";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -13,7 +14,7 @@ import {
   Users, Briefcase, CalendarClock, NotebookPen, LayoutDashboard, FileBarChart,
   Plus, Pencil, Trash2, Download, Search, X, GraduationCap, Award, AlertTriangle,
   Lightbulb, Clock, ShieldCheck, ChevronDown, LogIn, LogOut, KeyRound, Eye, EyeOff,
-  ThumbsUp, ThumbsDown, ClipboardCheck, FileSpreadsheet, Settings, Save,
+  ThumbsUp, ThumbsDown, ClipboardCheck, FileSpreadsheet, Settings, Save, Heart, Lock, Undo2,
 } from "lucide-react";
 
 /* ================= KONSTANTA ================= */
@@ -70,6 +71,17 @@ const TAHAPAN_SUPERVISI = ["Validasi Modul/Perencanaan Pembelajaran", "Pelaksana
 
 // Penilaian Kinerja Administrasi (Tenaga Administrasi) — skala 1–5
 const KRITERIA_ADMINISTRASI = ["Kedisiplinan & Kehadiran", "Ketelitian & Akurasi Kerja", "Pelayanan & Responsivitas", "Inisiatif & Kerja Sama", "Penguasaan Sistem/Administrasi"];
+
+// Penilaian Akhlak Mandiri — diisi guru sendiri, satu kali per semester, divalidasi (bukan dinilai ulang) oleh Kepala Sekolah.
+// Sengaja TIDAK masuk ke akumulasi Skor Total — akhlak yang sesungguhnya adalah urusan hati (lihat catatan di TabAkhlakSaya),
+// jadi ini murni indikator perilaku yang teramati, bersifat reflektif dan kualitatif, bukan alat pemeringkatan.
+const DIMENSI_AKHLAK = [
+  { kunci: "allah", label: "Akhlak kepada Allah", deskripsi: "Kedisiplinan ibadah, kekhusyukan yang teramati, semangat mendekatkan diri kepada-Nya" },
+  { kunci: "rasul", label: "Akhlak kepada Rasulullah ﷺ", deskripsi: "Menghidupkan sunnah, kecintaan yang termanifestasi dalam keseharian" },
+  { kunci: "sesama", label: "Akhlak kepada Sesama", deskripsi: "Adab kepada rekan kerja, siswa, dan wali santri; kesabaran serta keadilan" },
+  { kunci: "lingkungan", label: "Akhlak kepada Lingkungan", deskripsi: "Kebersihan, kepedulian terhadap fasilitas bersama dan alam sekitar" },
+];
+const WARNA_STATUS_AKHLAK = { "Menunggu Validasi": "#c2912e", "Divalidasi": "#1a5632" };
 
 
 /* ================= UTILITAS ================= */
@@ -145,8 +157,8 @@ const Tombol = ({ children, varian = "utama", onClick, kecil, type = "button", t
   </button>
 );
 
-const Kartu = ({ children, className = "", style }) => (
-  <div className={`kartu ${className}`} style={style}>{children}</div>
+const Kartu = ({ children, className = "", style, onClick }) => (
+  <div className={`kartu ${className}`} style={style} onClick={onClick}>{children}</div>
 );
 
 const Kolom = ({ label, children, wajib }) => (
@@ -312,6 +324,7 @@ const TAB = [
   { id: "supervisi", label: "Supervisi Pembelajaran", I: ClipboardCheck },
   { id: "administrasi", label: "Penilaian Administrasi", I: FileSpreadsheet },
   { id: "catatan", label: "Catatan Kinerja", I: NotebookPen },
+  { id: "akhlak", label: "Validasi Akhlak", I: Heart },
   { id: "laporan", label: "Laporan Guru", I: FileBarChart },
   { id: "akses", label: "Akses & Token", I: KeyRound },
   { id: "pengaturan", label: "Pengaturan Sekolah", I: Settings },
@@ -430,6 +443,7 @@ export default function AplikasiKinerjaGuru() {
           {tab === "supervisi" && <TabSupervisi data={data} ta={ta} sem={sem} />}
           {tab === "administrasi" && <TabAdministrasi data={data} ta={ta} sem={sem} />}
           {tab === "catatan" && <TabCatatan data={data} ta={ta} sem={sem} />}
+          {tab === "akhlak" && <TabValidasiAkhlak data={data} ta={ta} sem={sem} />}
           {tab === "laporan" && <TabLaporan data={data} ta={ta} sem={sem} />}
           {tab === "akses" && <TabAkun data={data} />}
           {tab === "pengaturan" && <TabPengaturan data={data} />}
@@ -437,6 +451,7 @@ export default function AplikasiKinerjaGuru() {
           guruSesi
             ? (<>
                 <div className="info-realtime">Data diperbarui langsung — penilaian terbaru dari Kepala Sekolah tampil otomatis.</div>
+                <KartuAkhlakSaya guru={guruSesi} data={data} />
                 <TabLaporan data={data} ta={ta} sem={sem} kunciGuruId={guruSesi.id} />
               </>)
             : <Kartu><Kosong pesan="Data guru untuk akun ini belum tersedia. Hubungi Kepala Sekolah/admin." /></Kartu>
@@ -741,6 +756,229 @@ function TabPengaturan({ data }) {
   );
 }
 
+/* ================= AKHLAK MANDIRI (Guru) ================= */
+
+// TA & semester "saat ini" mengikuti Tahun Ajaran Aktif di Pengaturan Sekolah + tanggal hari ini —
+// bukan filter TA di header, supaya guru selalu mengisi untuk periode yang sedang berjalan.
+const semesterSaatIni = () => semesterDariTanggal(new Date().toISOString().slice(0, 10));
+
+function KartuAkhlakSaya({ guru, data }) {
+  const [form, setForm] = useState(null);
+  const [proses, setProses] = useState(false);
+  const taAktif = data.pengaturan.ta || "2026/2027";
+  const semAktif = semesterSaatIni();
+  const existing = data.akhlak.find((r) => r.ta === taAktif && r.semester === semAktif);
+
+  const bukaForm = () => {
+    const awal = { ta: taAktif, semester: semAktif };
+    DIMENSI_AKHLAK.forEach((d) => { awal[d.kunci] = existing?.[d.kunci] || { nilai: null, catatan: "" }; });
+    setForm(awal);
+  };
+
+  const simpan = async () => {
+    if (DIMENSI_AKHLAK.some((d) => !form[d.kunci]?.nilai)) { window.alert("Mohon isi penilaian untuk keempat dimensi akhlak."); return; }
+    setProses(true);
+    try {
+      const isi = {};
+      DIMENSI_AKHLAK.forEach((d) => { isi[d.kunci] = form[d.kunci]; });
+      await ajukanPenilaianAkhlak(guru.id, taAktif, semAktif, isi);
+      setForm(null);
+    } catch (e) {
+      window.alert("Gagal menyimpan: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const terkunci = existing?.status === "Divalidasi";
+
+  return (
+    <>
+      <Kartu className="kartu-akhlak" style={{ marginBottom: 16, borderLeft: `4px solid ${existing ? WARNA_STATUS_AKHLAK[existing.status] : "#8a948c"}` }}>
+        <div className="kartu-kepala baris">
+          <div>
+            <h2><Ikon I={Heart} size={16} style={{ verticalAlign: -3, marginRight: 6 }} />Penilaian Akhlak Mandiri</h2>
+            <span className="sub">Semester {semAktif} · TA {taAktif} — diisi sendiri, sekali per semester</span>
+          </div>
+          {existing
+            ? <Lencana warna={WARNA_STATUS_AKHLAK[existing.status]}>{terkunci && <Ikon I={Lock} size={11} />} {existing.status}</Lencana>
+            : <Lencana warna="#8a948c">Belum diisi</Lencana>}
+        </div>
+
+        {!existing ? (
+          <Kosong pesan="Anda belum mengisi penilaian akhlak mandiri untuk semester ini."
+            aksi={<Tombol kecil onClick={bukaForm}><Ikon I={Plus} size={14} /> Isi Penilaian Sekarang</Tombol>} />
+        ) : (
+          <>
+            <div className="grid-akhlak-ringkas">
+              {DIMENSI_AKHLAK.map((d) => {
+                const v = existing[d.kunci];
+                const info = infoNilaiCatatan(v?.nilai);
+                return (
+                  <div key={d.kunci} className="akhlak-mini" style={{ borderColor: `${info.warna}55`, background: info.latar }}>
+                    <span className="teks-kecil">{d.label}</span>
+                    <strong style={{ color: info.warna }}>{v?.nilai} — {info.label}</strong>
+                  </div>
+                );
+              })}
+            </div>
+            {existing.catatanValidasi && (
+              <p className="teks-kecil" style={{ marginTop: 10 }}><strong>Catatan Kepala Sekolah:</strong> {existing.catatanValidasi}</p>
+            )}
+            <div className="aksi" style={{ marginTop: 10 }}>
+              {!terkunci
+                ? <Tombol kecil varian="netral" onClick={bukaForm}><Ikon I={Pencil} size={13} /> Ubah Penilaian</Tombol>
+                : <span className="teks-kecil" style={{ color: "#6b7a6e" }}><Ikon I={Lock} size={12} /> Sudah divalidasi, tidak bisa diubah lagi.</span>}
+            </div>
+          </>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul="Penilaian Akhlak Mandiri" onTutup={() => setForm(null)} lebar={640}>
+          <p className="teks-kecil" style={{ marginBottom: 14, lineHeight: 1.6 }}>
+            Penilaian ini bersifat refleksi diri yang jujur — bukan alat pemeringkatan. Nilai berdasarkan perilaku yang benar-benar teramati,
+            bukan yang ideal. Kepala Sekolah akan memvalidasi, bukan menilai ulang.
+          </p>
+          <div className="form-grid">
+            {DIMENSI_AKHLAK.map((d) => (
+              <div key={d.kunci} className="blok-akhlak-form">
+                <Kolom label={d.label} wajib>
+                  <p className="teks-kecil" style={{ margin: "0 0 8px", color: "#6b7a6e" }}>{d.deskripsi}</p>
+                  <PemilihSkala5 nilai={form[d.kunci]?.nilai} onUbah={(n) => setForm({ ...form, [d.kunci]: { ...form[d.kunci], nilai: n } })} keterangan={KETERANGAN_NILAI_CATATAN} />
+                </Kolom>
+                <Kolom label="Catatan reflektif (opsional)">
+                  <textarea rows={2} value={form[d.kunci]?.catatan || ""} onChange={(e) => setForm({ ...form, [d.kunci]: { ...form[d.kunci], catatan: e.target.value } })} placeholder="Contoh peristiwa atau kebiasaan yang mendasari penilaian ini…" />
+                </Kolom>
+              </div>
+            ))}
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>{proses ? "Menyimpan…" : "Ajukan untuk Divalidasi"}</Tombol>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/* ================= VALIDASI AKHLAK (Admin) ================= */
+
+function TabValidasiAkhlak({ data, ta, sem }) {
+  const [lihat, setLihat] = useState(null);
+  const [fStatus, setFStatus] = useState("Semua");
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = data.akhlak
+    .filter((r) => ta === "Semua" || r.ta === ta)
+    .filter((r) => sem === "Semua" || r.semester === sem)
+    .filter((r) => fStatus === "Semua" || r.status === fStatus)
+    .sort((a, b) => (b.diperbaruiPada || "").localeCompare(a.diperbaruiPada || ""));
+
+  const menunggu = data.akhlak.filter((r) => r.status === "Menunggu Validasi").length;
+
+  const validasi = async (r, catatan) => {
+    try { await validasiPenilaianAkhlak(r.id, catatan); setLihat(null); }
+    catch (e) { window.alert("Gagal memvalidasi: " + (e?.message || e)); }
+  };
+  const bukaKembali = async (r) => {
+    if (!window.confirm("Buka kembali penilaian ini agar guru bisa merevisi?")) return;
+    try { await bukaKembaliPenilaianAkhlak(r.id); setLihat(null); }
+    catch (e) { window.alert("Gagal: " + (e?.message || e)); }
+  };
+
+  return (
+    <div className="susun-v">
+      <p className="keterangan">
+        Penilaian akhlak diisi mandiri oleh guru satu kali per semester. Peran Kepala Sekolah di sini adalah <strong>memvalidasi</strong> —
+        menandai sudah diterima dan ditinjau — bukan menilai ulang angkanya. Data ini bersifat reflektif-kualitatif dan tidak dihitung ke Skor Total.
+      </p>
+
+      <div className="baris-alat">
+        <div className="pilih-bungkus">
+          <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+            <option value="Semua">Semua status</option>
+            <option value="Menunggu Validasi">Menunggu Validasi</option>
+            <option value="Divalidasi">Divalidasi</option>
+          </select>
+          <Ikon I={ChevronDown} size={14} />
+        </div>
+        {menunggu > 0 && <Lencana warna="#c2912e"><Ikon I={AlertTriangle} size={12} /> {menunggu} menunggu validasi</Lencana>}
+      </div>
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada penilaian akhlak mandiri pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Guru</th><th>TA · Semester</th><th>Rata-rata</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => {
+                const rata4 = DIMENSI_AKHLAK.reduce((a, d) => a + (Number(r[d.kunci]?.nilai) || 0), 0) / 4;
+                const info = infoNilaiCatatan(Math.round(rata4));
+                return (
+                  <tr key={r.id}>
+                    <td><strong>{namaGuru(r.guruId)}</strong></td>
+                    <td className="teks-kecil">{r.ta} · {r.semester}</td>
+                    <td><span style={{ color: warnaRataSkala5(rata4), fontWeight: 700 }}>{rata4.toFixed(1)}</span> <span className="teks-kecil">({info.label})</span></td>
+                    <td><Lencana warna={WARNA_STATUS_AKHLAK[r.status]}>{r.status === "Divalidasi" && <Ikon I={Lock} size={11} />} {r.status}</Lencana></td>
+                    <td className="aksi"><Tombol kecil varian="netral" onClick={() => setLihat(r)}>Lihat Detail</Tombol></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {lihat && (
+        <Modal judul={`Penilaian Akhlak — ${namaGuru(lihat.guruId)}`} onTutup={() => setLihat(null)} lebar={620}>
+          <p className="teks-kecil" style={{ marginBottom: 10 }}>{lihat.ta} · Semester {lihat.semester}</p>
+          <div className="susun-v">
+            {DIMENSI_AKHLAK.map((d) => {
+              const v = lihat[d.kunci];
+              const info = infoNilaiCatatan(v?.nilai);
+              return (
+                <div key={d.kunci} className="akhlak-detail-baris" style={{ borderLeft: `3px solid ${info.warna}` }}>
+                  <div className="baris" style={{ justifyContent: "space-between" }}>
+                    <strong>{d.label}</strong>
+                    <Lencana warna={info.warna}>{v?.nilai} — {info.label}</Lencana>
+                  </div>
+                  {v?.catatan && <p className="teks-kecil" style={{ marginTop: 4 }}>{v.catatan}</p>}
+                </div>
+              );
+            })}
+          </div>
+
+          {lihat.status === "Menunggu Validasi" ? (
+            <FormValidasi onValidasi={(catatan) => validasi(lihat, catatan)} onBatal={() => setLihat(null)} />
+          ) : (
+            <>
+              {lihat.catatanValidasi && <p className="teks-kecil" style={{ marginTop: 14 }}><strong>Catatan validasi:</strong> {lihat.catatanValidasi}</p>}
+              <div className="form-aksi" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <button className="tautan-polos" onClick={() => bukaKembali(lihat)}><Ikon I={Undo2} size={13} /> Buka kembali untuk revisi</button>
+                <Tombol varian="netral" onClick={() => setLihat(null)}>Tutup</Tombol>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function FormValidasi({ onValidasi, onBatal }) {
+  const [catatan, setCatatan] = useState("");
+  return (
+    <>
+      <Kolom label="Catatan validasi (opsional)">
+        <textarea rows={2} value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Apresiasi atau arahan singkat, jika ada…" />
+      </Kolom>
+      <div className="form-aksi">
+        <Tombol varian="netral" onClick={onBatal}>Tutup</Tombol>
+        <Tombol onClick={() => onValidasi(catatan)}><Ikon I={ShieldCheck} size={15} /> Tandai Divalidasi</Tombol>
+      </div>
+    </>
+  );
+}
+
 /* ================= DASBOR ================= */
 
 function Dasbor({ data, ta, sem, kePindah }) {
@@ -754,6 +992,7 @@ function Dasbor({ data, ta, sem, kePindah }) {
 
   const belumDinilai = data.struktural.filter((r) => !Number(r.nilai)).length +
     totIns.filter((r) => !Number(r.nilai)).length;
+  const akhlakMenunggu = (data.akhlak || []).filter((r) => r.status === "Menunggu Validasi").length;
 
   const statistik = [
     { label: "Guru terdaftar", nilai: data.guru.length, I: Users },
@@ -761,6 +1000,7 @@ function Dasbor({ data, ta, sem, kePindah }) {
     { label: "Tugas insidental (periode ini)", nilai: totIns.length, I: CalendarClock },
     { label: "Total jam tugas tambahan", nilai: totJam, I: Clock },
     { label: "Tugas belum dinilai", nilai: belumDinilai, I: AlertTriangle, sorot: belumDinilai > 0 },
+    { label: "Akhlak menunggu validasi", nilai: akhlakMenunggu, I: Heart, sorot: akhlakMenunggu > 0, aksi: () => kePindah("akhlak") },
   ];
 
   const terbaru = [...totIns.map((r) => ({ ...r, tipe: "insidental" })), ...totCat.map((r) => ({ ...r, tipe: "catatan" }))]
@@ -771,7 +1011,8 @@ function Dasbor({ data, ta, sem, kePindah }) {
     <div className="susun-v">
       <div className="grid-stat">
         {statistik.map((s) => (
-          <Kartu key={s.label} className="stat" style={s.sorot ? { borderColor: "#c2912e", background: "#fdf8ee" } : undefined}>
+          <Kartu key={s.label} className="stat" onClick={s.aksi}
+            style={{ ...(s.sorot ? { borderColor: "#c2912e", background: "#fdf8ee" } : {}), ...(s.aksi ? { cursor: "pointer" } : {}) }}>
             <div className="stat-ikon" style={s.sorot ? { background: "#f5e8cc", color: "#a3761f" } : undefined}><Ikon I={s.I} size={18} /></div>
             <div><div className="stat-angka">{s.nilai}</div><div className="stat-label">{s.label}</div></div>
           </Kartu>
@@ -1401,6 +1642,11 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
       ...(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup).map((r) => [r.tanggal, r.kriteria || r.tahapan, r.nilai, r.catatan]), [],
       ["CATATAN KINERJA"], ["Tanggal", "Jenis", "Nilai", "Predikat", "Deskripsi", "Skor"],
       ...p.cat.map((r) => [r.tanggal, r.jenis, r.nilai, infoNilaiCatatan(r.nilai).label, r.deskripsi, skorCatatanItem(r)]), [],
+      ["PENILAIAN AKHLAK MANDIRI", "(reflektif, tidak dihitung ke Skor Total)"],
+      ["TA/Semester", "Status", ...DIMENSI_AKHLAK.map((d) => d.label)],
+      ...(data.akhlak || []).filter((r) => r.guruId === guruId).map((r) => [
+        `${r.ta} · ${r.semester}`, r.status, ...DIMENSI_AKHLAK.map((d) => r[d.kunci]?.nilai ?? "-"),
+      ]), [],
       ["REKAP SKOR"],
       ["Skor tugas struktural", p.skorStruktural],
       ["Skor tugas insidental", p.skorInsidental],
@@ -1795,6 +2041,15 @@ function Gaya() {
 
     .catatan-kartu { display: flex; flex-direction: column; gap: 6px; }
     .catatan-atas { display: flex; justify-content: space-between; align-items: center; }
+
+    .baris { display: flex; align-items: center; }
+    .kartu-akhlak .kartu-kepala h2 { display: flex; align-items: center; }
+    .grid-akhlak-ringkas { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 10px; }
+    .akhlak-mini { border: 1px solid; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+    .akhlak-mini strong { font-size: 13px; }
+    .blok-akhlak-form { padding: 12px; background: var(--latar); border-radius: 10px; border: 1px solid var(--garis); }
+    .blok-akhlak-form + .blok-akhlak-form { margin-top: 4px; }
+    .akhlak-detail-baris { padding: 8px 12px; background: var(--latar); border-radius: 0 8px 8px 0; }
     .catatan-kartu p { margin: 0; font-size: 13px; line-height: 1.5; }
     .tautan { color: var(--hijau); font-size: 12.5px; }
 
