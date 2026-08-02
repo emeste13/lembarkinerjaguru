@@ -303,15 +303,15 @@ const hitungProfil = (guruId, data, ta, sem) => {
   // Radar 0–100 sederhana (semua komponen penilaian kini berskala 1–5, dikonversi ke 0–100 untuk radar)
   const radar = kategoriPegawai === "Tenaga Administrasi"
     ? [
-        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 5) * 70 + str.length * 15)) },
-        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 5) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.round((rataStruktural / 5) * 100) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.round((rataInsidental / 5) * 100) },
         { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
         ...perKriteriaAdministrasi.filter((k) => k.nilai !== null).map((k) => ({ dimensi: k.kriteria.split(" ")[0], nilai: Math.round((k.nilai / 5) * 100) })),
       ]
     : [
         { dimensi: "Beban Mengajar", nilai: Math.min(100, Math.round(((g?.jam || 0) / 24) * 100)) },
-        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.min(100, Math.round((rataStruktural / 5) * 70 + str.length * 15)) },
-        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.min(100, Math.round((rataInsidental / 5) * 60 + ins.length * 6 + totalJamIns * 0.5)) },
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.round((rataStruktural / 5) * 100) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.round((rataInsidental / 5) * 100) },
         { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
         { dimensi: "Inovasi", nilai: Math.min(100, nCat("Inovasi") * 30) },
         { dimensi: "Supervisi Pembelajaran", nilai: rataSupervisi === null ? 0 : Math.round((rataSupervisi / 5) * 100) },
