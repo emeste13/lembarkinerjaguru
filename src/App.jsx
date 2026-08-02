@@ -66,6 +66,9 @@ const labelSkor100 = (n) => (n >= 85 ? "Sangat Baik" : n >= 70 ? "Baik" : n >= 5
 
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 
+// Urutkan daftar pegawai berdasarkan abjad nama (tidak mengubah data asli)
+const urutkanNama = (l) => [...l].sort((a, b) => (a.nama || "").localeCompare(b.nama || "", "id", { sensitivity: "base" }));
+
 const fmtTgl = (iso) => {
   if (!iso) return "-";
   const d = new Date(iso + "T00:00:00");
@@ -282,6 +285,7 @@ export default function AplikasiKinerjaGuru() {
   const [tab, setTab] = useState("dasbor");
   const [ta, setTa] = useState("2026/2027");
   const [sem, setSem] = useState("Semua");
+  const [keluarKarenaIdle, setKeluarKarenaIdle] = useState(false);
   const taTersinkron = React.useRef(false);
 
   useEffect(() => {
@@ -292,6 +296,27 @@ export default function AplikasiKinerjaGuru() {
   }, [data?.pengaturan?.ta]);
 
   useEffect(() => pantauSesi(setSesi), []);
+
+  // Auto-logout setelah 2 jam tidak ada aktivitas (mouse, keyboard, sentuhan, scroll)
+  useEffect(() => {
+    if (!sesi || sesi.peran === "tanpa-peran") return;
+    const BATAS_IDLE_MS = 2 * 60 * 60 * 1000; // 2 jam
+    let waktu;
+    const atur = () => {
+      clearTimeout(waktu);
+      waktu = setTimeout(() => {
+        keluar();
+        setKeluarKarenaIdle(true);
+      }, BATAS_IDLE_MS);
+    };
+    const peristiwa = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "wheel"];
+    peristiwa.forEach((p) => window.addEventListener(p, atur, { passive: true }));
+    atur();
+    return () => {
+      clearTimeout(waktu);
+      peristiwa.forEach((p) => window.removeEventListener(p, atur));
+    };
+  }, [sesi?.uid]);
 
   useEffect(() => {
     if (!sesi || sesi.peran === "tanpa-peran") { setData(null); return; }
@@ -306,7 +331,7 @@ export default function AplikasiKinerjaGuru() {
   }, [data]);
 
   if (sesi === undefined) return (<><Gaya /><div className="muat">Memeriksa sesi…</div></>);
-  if (sesi === null) return (<><Gaya /><Masuk /></>);
+  if (sesi === null) return (<><Gaya /><Masuk keluarKarenaIdle={keluarKarenaIdle} /></>);
   if (sesi.peran === "tanpa-peran") return (<><Gaya /><TanpaPeran email={sesi.email} /></>);
   if (!data) return (<><Gaya /><div className="muat">Memuat data dari server…</div></>);
 
@@ -390,7 +415,7 @@ const aman = (janji) => Promise.resolve(janji).catch((e) =>
 
 /* ================= HALAMAN MASUK ================= */
 
-function Masuk() {
+function Masuk({ keluarKarenaIdle = false }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [galat, setGalat] = useState("");
@@ -427,6 +452,9 @@ function Masuk() {
         <div style={{ margin: "0 auto" }}><LogoSekolah size={64} /></div>
         <h1>Catatan Kinerja Guru</h1>
         <p className="sub">SMP Al Hikmah IIBS Batu</p>
+        {keluarKarenaIdle && (
+          <p className="masuk-idle"><Ikon I={AlertTriangle} size={14} /> Anda keluar otomatis karena tidak ada aktivitas selama 2 jam. Silakan masuk kembali.</p>
+        )}
         <label className="kolom" style={{ textAlign: "left", marginTop: 18 }}>
           <span className="kolom-label">Email</span>
           <input type="email" value={email} autoFocus placeholder="nama@sekolah.sch.id"
@@ -480,7 +508,7 @@ function TabAkun({ data }) {
   useEffect(() => langgananUsers(setUsers), []);
 
   const akunGuru = (guruId) => users.find((u) => u.peran === "guru" && u.guruId === guruId);
-  const tanpaAkun = data.guru.filter((g) => !akunGuru(g.id));
+  const tanpaAkun = urutkanNama(data.guru.filter((g) => !akunGuru(g.id)));
 
   const buatAkun = async () => {
     if (!formAkun.guruId || !formAkun.email.trim() || formAkun.password.length < 6) {
@@ -544,7 +572,7 @@ function TabAkun({ data }) {
         <div className="tabel-bungkus"><table>
           <thead><tr><th>Nama</th><th>NIK/NIP</th><th>Status Akun</th><th>Email Login</th><th></th></tr></thead>
           <tbody>
-            {data.guru.map((g) => {
+            {urutkanNama(data.guru).map((g) => {
               const akun = akunGuru(g.id);
               return (
                 <tr key={g.id}>
@@ -765,8 +793,8 @@ function TabGuru({ data }) {
   const [form, setForm] = useState(null);
   const [cari, setCari] = useState("");
 
-  const daftar = data.guru.filter((g) =>
-    [g.nama, g.mapel, g.nik].join(" ").toLowerCase().includes(cari.toLowerCase()));
+  const daftar = urutkanNama(data.guru.filter((g) =>
+    [g.nama, g.mapel, g.nik].join(" ").toLowerCase().includes(cari.toLowerCase())));
 
   const simpan = () => {
     if (!form.nama.trim()) return;
@@ -859,7 +887,7 @@ function TabStruktural({ data }) {
     setForm(null);
   };
 
-  const perGuru = data.guru.map((g) => ({ g, tugas: data.struktural.filter((r) => r.guruId === g.id) }));
+  const perGuru = urutkanNama(data.guru).map((g) => ({ g, tugas: data.struktural.filter((r) => r.guruId === g.id) }));
 
   return (
     <div className="susun-v">
@@ -904,7 +932,7 @@ function TabStruktural({ data }) {
           <div className="form-grid">
             <Kolom label="Guru" wajib>
               <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
-                {data.guru.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
               </select>
             </Kolom>
             <Kolom label="Nama jabatan" wajib><input value={form.jabatan} onChange={(e) => setForm({ ...form, jabatan: e.target.value })} placeholder="Waka Kesiswaan, Wali Kelas 7B, …" /></Kolom>
@@ -961,7 +989,7 @@ function TabInsidental({ data, ta, sem }) {
         <div className="cari"><Ikon I={Search} size={15} /><input placeholder="Cari kegiatan atau peran…" value={cari} onChange={(e) => setCari(e.target.value)} /></div>
         <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
           <option value="Semua">Semua guru</option>
-          {data.guru.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+          {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
         </select><Ikon I={ChevronDown} size={14} /></div>
         <div className="pilih-bungkus"><select value={fKat} onChange={(e) => setFKat(e.target.value)}>
           <option value="Semua">Semua kategori</option>
@@ -1003,7 +1031,7 @@ function TabInsidental({ data, ta, sem }) {
             <div className="grid-2-form">
               <Kolom label="Guru" wajib>
                 <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
-                  {data.guru.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                  {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
                 </select>
               </Kolom>
               <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
@@ -1039,7 +1067,7 @@ function TabSupervisi({ data, ta, sem }) {
   const [form, setForm] = useState(null);
   const [fGuru, setFGuru] = useState("Semua");
 
-  const guruRelevan = data.guru.filter(bukanAdministrasi);
+  const guruRelevan = urutkanNama(data.guru.filter(bukanAdministrasi));
   const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
 
   const daftar = (data.supervisi || [])
@@ -1132,7 +1160,7 @@ function TabAdministrasi({ data, ta, sem }) {
   const [form, setForm] = useState(null);
   const [fGuru, setFGuru] = useState("Semua");
 
-  const pegawaiRelevan = data.guru.filter((g) => (g.kategori || "Guru") === "Tenaga Administrasi");
+  const pegawaiRelevan = urutkanNama(data.guru.filter((g) => (g.kategori || "Guru") === "Tenaga Administrasi"));
   const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
 
   const daftar = (data.administrasi || [])
@@ -1245,7 +1273,7 @@ function TabCatatan({ data, ta, sem }) {
       <div className="baris-alat">
         <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
           <option value="Semua">Semua guru</option>
-          {data.guru.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+          {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
         </select><Ikon I={ChevronDown} size={14} /></div>
         <Tombol onClick={() => setForm({ guruId: data.guru[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), jenis: JENIS_CATATAN[0], sifat: SIFAT_BAWAAN[JENIS_CATATAN[0]], deskripsi: "", bukti: "" })}>
           <Ikon I={Plus} size={15} /> Tulis Catatan
@@ -1286,7 +1314,7 @@ function TabCatatan({ data, ta, sem }) {
             <div className="grid-2-form">
               <Kolom label="Guru" wajib>
                 <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
-                  {data.guru.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                  {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
                 </select>
               </Kolom>
               <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
@@ -1367,7 +1395,7 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
     const baris = [
       ["REKAP KINERJA SELURUH GURU", data.pengaturan.namaSekolah, labelPeriode], [],
       ["Nama", "Kategori", "NIK/NIP", "Mapel/Jabatan", "Jam", "Jml Tugas Struktural", "Rata2 Nilai Struktural", "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", "Tugas Belum Dinilai", "Jml Catatan", `Skor Struktural (x${BOBOT.struktural})`, `Skor Insidental (x${BOBOT.insidental})`, "Skor Catatan", "SKOR TOTAL", "Rata2 Supervisi/Administrasi (1-100)"],
-      ...data.guru.map((g) => {
+      ...urutkanNama(data.guru).map((g) => {
         const q = hitungProfil(g.id, data, ta, sem);
         return [g.nama, q.kategoriPegawai, g.nik, g.mapel, g.jam, q.str.length, q.rataStruktural ? q.rataStruktural.toFixed(2) : "", q.ins.length, q.rataInsidental ? q.rataInsidental.toFixed(2) : "", q.totalJamIns, q.belumDinilai, q.cat.length, q.skorStruktural, q.skorInsidental, q.skorCatatan, q.skorTotal, q.skorFungsional ?? ""];
       }),
@@ -1384,7 +1412,7 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
           <span className="sub" style={{ fontSize: 13 }}>Laporan kinerja pribadi — hanya data Anda yang ditampilkan.</span>
         ) : (
           <div className="pilih-bungkus besar"><select value={guruId} onChange={(e) => setGuruId(e.target.value)}>
-            {data.guru.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+            {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
           </select><Ikon I={ChevronDown} size={14} /></div>
         )}
         <div className="baris-alat">
@@ -1707,6 +1735,11 @@ function Gaya() {
     .masuk-kotak h1 { margin: 10px 0 0; font-size: 20px; font-family: Georgia, serif; color: var(--hijau-tua); }
     .masuk-kotak .btn { justify-content: center; margin-top: 6px; }
     .masuk-galat { margin: 0; color: var(--bahaya); font-size: 12.5px; text-align: left; }
+    .masuk-idle {
+      display: flex; align-items: center; gap: 7px; margin: 4px 0 0; padding: 8px 12px;
+      background: #fdf8ee; border: 1px solid #ecd9ab; border-radius: 8px;
+      color: #8a6417; font-size: 12px; text-align: left;
+    }
     .masuk-catatan { margin: 10px 0 0; font-size: 11.5px; color: var(--redup); line-height: 1.55; }
 
     .baris-lencana { display: flex; gap: 5px; flex-wrap: wrap; }
@@ -1776,6 +1809,111 @@ function Gaya() {
     .skor-rincian span { font-size: 11.5px; color: var(--redup); display: block; }
     .skor-rincian strong { font-size: 19px; color: var(--hijau-tua); }
     .skor-rincian em { display: block; font-size: 11px; color: var(--redup); font-style: normal; }
+
+    /* ================= TAMPILAN MOBILE ================= */
+    @media (max-width: 760px) {
+      .kepala {
+        flex-direction: column; align-items: stretch; padding: 14px 14px; gap: 12px;
+      }
+      .kepala-merek { gap: 10px; }
+      .kepala-logo { width: 38px; height: 38px; }
+      .kepala h1 { font-size: 16.5px; }
+      .kepala p { font-size: 11.5px; }
+      .kepala-filter {
+        width: 100%; flex-wrap: wrap; gap: 8px;
+      }
+      .kepala-filter .pilih-bungkus { flex: 1 1 auto; min-width: 128px; }
+      .kepala-filter .pilih-bungkus select { width: 100%; font-size: 13px; padding: 9px 28px 9px 10px; }
+      .sesi-info {
+        width: 100%; justify-content: space-between; border-left: none;
+        border-top: 1px solid rgba(255,255,255,.25); padding: 10px 0 0; margin: 0;
+      }
+      .sesi-peran { max-width: none; flex: 1; }
+
+      .navigasi { padding: 0 6px; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+      .nav-item { padding: 11px 12px; font-size: 12.5px; gap: 5px; }
+
+      .isi { padding: 14px 12px; }
+      .kaki { padding: 12px; font-size: 11px; }
+
+      .grid-stat { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .stat { padding: 12px; gap: 10px; }
+      .stat-angka { font-size: 19px; }
+      .stat-label { font-size: 10.5px; }
+
+      .kartu { padding: 14px; border-radius: 9px; }
+      .kartu-kepala h2 { font-size: 14.5px; }
+
+      .baris-alat { flex-wrap: wrap; row-gap: 10px; }
+      .baris-alat.bungkus { gap: 8px; }
+      .baris-alat > .baris-alat { width: 100%; flex-wrap: wrap; }
+      .cari { max-width: none; width: 100%; }
+      .pilih-bungkus.besar { width: 100%; }
+      .pilih-bungkus.besar select { min-width: 0; width: 100%; }
+      .keterangan { max-width: none; }
+
+      .btn { padding: 10px 14px; min-height: 40px; }
+      .btn-kecil { min-height: 34px; padding: 7px 11px; }
+      .btn-ikon { width: 36px; height: 36px; }
+
+      table { font-size: 12.5px; }
+      th { padding: 7px 8px; font-size: 10px; }
+      td { padding: 8px; }
+
+      .nilai-pilih { min-width: 0; font-size: 11.5px; padding: 5px 8px; }
+
+      .modal-latar { padding: 0; align-items: flex-end; }
+      .modal { max-width: none !important; width: 100%; max-height: 94vh; border-radius: 14px 14px 0 0; }
+      .modal-kepala { padding: 14px 16px 6px; }
+      .modal-isi { padding: 6px 16px 18px; }
+      .grid-2-form { grid-template-columns: 1fr; }
+      .form-aksi { flex-direction: column-reverse; }
+      .form-aksi .btn { width: 100%; justify-content: center; }
+
+      .grid-catatan { grid-template-columns: 1fr; }
+
+      .laporan-kop { gap: 10px; }
+      .laporan-kop h2 { font-size: 15px; }
+      .skor-total { margin-left: 0; width: 100%; }
+      .laporan-identitas { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .skor-rincian { grid-template-columns: 1fr; }
+
+      .masuk-kotak { padding: 26px 20px; }
+
+      .token-baris { flex-wrap: wrap; }
+      .token-baris input { width: 100%; }
+
+      .sifat-pilih { flex-direction: column; }
+
+      /* Cegah auto-zoom iOS Safari saat fokus ke input (perlu font-size >= 16px) */
+      .kolom input, .kolom select, .kolom textarea, .cari input,
+      .nilai-pilih, .pilih-bungkus select { font-size: 16px !important; }
+
+      /* Tabel lebar tetap bisa digeser horizontal dengan nyaman di layar sempit */
+      .tabel-bungkus { -webkit-overflow-scrolling: touch; margin: 0 -14px; padding: 0 14px; width: calc(100% + 28px); }
+      .kartu { overflow: hidden; }
+
+      /* Header identitas sekolah tidak terpotong di layar sempit */
+      .kepala-merek { min-width: 0; }
+      .kepala-merek > div:last-child { min-width: 0; }
+      .kepala h1, .kepala p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      .lencana { font-size: 10.5px; padding: 2px 7px; }
+      .stat-ikon { width: 32px; height: 32px; }
+    }
+
+    /* Target sentuh nyaman di semua perangkat layar sentuh, bukan hanya <760px */
+    @media (hover: none) and (pointer: coarse) {
+      .btn-ikon { width: 38px; height: 38px; }
+      .nav-item { min-height: 44px; }
+      .nilai-pilih, .kolom select { min-height: 40px; }
+    }
+
+    @media (max-width: 420px) {
+      .grid-stat { grid-template-columns: 1fr; }
+      .laporan-identitas { grid-template-columns: 1fr; }
+      .kepala h1 { font-size: 15px; }
+    }
 
     @media print {
       .kepala, .navigasi, .baris-alat, .kaki, .galat-bar { display: none !important; }
