@@ -17,6 +17,7 @@ export const KOLEKSI = {
   catatan: "catatanKinerja",
   supervisi: "supervisiPembelajaran",
   administrasi: "penilaianAdministrasi",
+  akhlak: "penilaianAkhlak",
 };
 
 export const masuk = (email, password) => signInWithEmailAndPassword(auth, email, password);
@@ -60,9 +61,9 @@ export const buatAkunGuru = async ({ email, password, guruId, nama }) => {
 
 export const langgananData = (sesi, cb) => {
   const stops = [];
-  const state = { guru: [], struktural: [], insidental: [], catatan: [], supervisi: [], administrasi: [], pengaturan: { namaSekolah: "SMP Al Hikmah IIBS Batu", ta: "2026/2027" } };
+  const state = { guru: [], struktural: [], insidental: [], catatan: [], supervisi: [], administrasi: [], akhlak: [], pengaturan: { namaSekolah: "SMP Al Hikmah IIBS Batu", ta: "2026/2027" } };
   const kePeta = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const kirim = () => cb({ ...state, guru: [...state.guru], struktural: [...state.struktural], insidental: [...state.insidental], catatan: [...state.catatan], supervisi: [...state.supervisi], administrasi: [...state.administrasi] });
+  const kirim = () => cb({ ...state, guru: [...state.guru], struktural: [...state.struktural], insidental: [...state.insidental], catatan: [...state.catatan], supervisi: [...state.supervisi], administrasi: [...state.administrasi], akhlak: [...state.akhlak] });
 
   stops.push(onSnapshot(doc(db, "pengaturan", "utama"), (s) => {
     if (s.exists()) state.pengaturan = { ...state.pengaturan, ...s.data() };
@@ -76,6 +77,7 @@ export const langgananData = (sesi, cb) => {
     stops.push(onSnapshot(collection(db, KOLEKSI.catatan), (s) => { state.catatan = kePeta(s); kirim(); }));
     stops.push(onSnapshot(collection(db, KOLEKSI.supervisi), (s) => { state.supervisi = kePeta(s); kirim(); }));
     stops.push(onSnapshot(collection(db, KOLEKSI.administrasi), (s) => { state.administrasi = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(collection(db, KOLEKSI.akhlak), (s) => { state.akhlak = kePeta(s); kirim(); }));
   } else if (sesi.peran === "guru" && sesi.guruId) {
     const gid = sesi.guruId;
     stops.push(onSnapshot(doc(db, KOLEKSI.guru, gid), (s) => {
@@ -87,6 +89,7 @@ export const langgananData = (sesi, cb) => {
     stops.push(onSnapshot(q(KOLEKSI.catatan), (s) => { state.catatan = kePeta(s); kirim(); }));
     stops.push(onSnapshot(q(KOLEKSI.supervisi), (s) => { state.supervisi = kePeta(s); kirim(); }));
     stops.push(onSnapshot(q(KOLEKSI.administrasi), (s) => { state.administrasi = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(q(KOLEKSI.akhlak), (s) => { state.akhlak = kePeta(s); kirim(); }));
   }
   return () => stops.forEach((stop) => stop());
 };
@@ -105,9 +108,27 @@ export const perbaruiDok = (kol, id, patch) => updateDoc(doc(db, kol, id), bersi
 export const hapusDok = (kol, id) => deleteDoc(doc(db, kol, id));
 export const simpanPengaturan = (patch) => setDoc(doc(db, "pengaturan", "utama"), patch, { merge: true });
 
+// Penilaian Akhlak Mandiri — ID dokumen deterministik (guruId_TA_Semester) sehingga
+// otomatis membatasi satu pengisian per guru per semester (mengisi ulang = menimpa dokumen yang sama).
+// Guru hanya boleh menulis selagi status masih "Menunggu Validasi" (ditegakkan oleh Security Rules).
+export const idAkhlak = (guruId, ta, semester) => `${guruId}_${ta.replace("/", "-")}_${semester}`;
+
+export const ajukanPenilaianAkhlak = (guruId, ta, semester, isi) =>
+  setDoc(doc(db, KOLEKSI.akhlak, idAkhlak(guruId, ta, semester)), bersih({
+    ...isi, guruId, ta, semester, status: "Menunggu Validasi", diperbaruiPada: new Date().toISOString(),
+  }));
+
+export const validasiPenilaianAkhlak = (docId, catatanValidasi = "") =>
+  updateDoc(doc(db, KOLEKSI.akhlak, docId), {
+    status: "Divalidasi", catatanValidasi, tanggalValidasi: new Date().toISOString(),
+  });
+
+export const bukaKembaliPenilaianAkhlak = (docId) =>
+  updateDoc(doc(db, KOLEKSI.akhlak, docId), { status: "Menunggu Validasi", catatanValidasi: "", tanggalValidasi: null });
+
 export const hapusGuruMenyeluruh = async (guruId) => {
   const batch = writeBatch(db);
-  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan, KOLEKSI.supervisi, KOLEKSI.administrasi]) {
+  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan, KOLEKSI.supervisi, KOLEKSI.administrasi, KOLEKSI.akhlak]) {
     const s = await getDocs(query(collection(db, kol), where("guruId", "==", guruId)));
     s.docs.forEach((d) => batch.delete(d.ref));
   }
