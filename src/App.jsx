@@ -24,16 +24,27 @@ const KAT_WARNA = { "Kepanitiaan": "#1a5632", "Kedinasan": "#2e7d4f", "Akademik"
 const JENIS_CATATAN = ["Prestasi", "Inovasi", "Kedisiplinan", "Pembinaan", "Pelanggaran Ringan"];
 const CAT_WARNA = { "Prestasi": "#c2912e", "Inovasi": "#2e7d4f", "Kedisiplinan": "#1a5632", "Pembinaan": "#b06a2c", "Pelanggaran Ringan": "#b23a3a" };
 
-// Sifat catatan: menentukan warna dan arah skor (menambah/mengurangi)
-const SIFAT_INFO = {
-  "Positif": { warna: "#177a3e", latar: "#e9f6ee" },
-  "Negatif": { warna: "#c03333", latar: "#fbecec" },
+// Nilai catatan kinerja: skala 1–5 bergradasi warna (hijau = baik, merah = bermasalah).
+// Tidak lagi dipukul rata positif/negatif — setiap catatan dinilai tingkat kualitasnya.
+const NILAI_CATATAN = [
+  { nilai: 5, label: "Sangat Baik", warna: "#1a5632", latar: "#e6f0e9" },
+  { nilai: 4, label: "Baik", warna: "#3f8f5b", latar: "#eaf5ee" },
+  { nilai: 3, label: "Cukup / Standar", warna: "#c2912e", latar: "#fbf3e2" },
+  { nilai: 2, label: "Kurang", warna: "#c9702f", latar: "#fcece0" },
+  { nilai: 1, label: "Bermasalah", warna: "#b23a3a", latar: "#fbecec" },
+];
+const infoNilaiCatatan = (n) => NILAI_CATATAN.find((x) => x.nilai === Number(n)) || NILAI_CATATAN[2];
+// Skor: 5→+4, 4→+2, 3→0, 2→−2, 1→−4 — simetris di sekitar "standar"
+const skorCatatanItem = (r) => (Number(r.nilai || 3) - 3) * 2;
+
+// Deskripsi bantuan saat memilih nilai, sesuai definisi Kepala Sekolah
+const KETERANGAN_NILAI_CATATAN = {
+  5: "Kinerja istimewa, melebihi harapan",
+  4: "Kinerja baik, sesuai harapan",
+  3: "Standar, tidak ada catatan khusus",
+  2: "Ada sedikit kekurangan/masalah",
+  1: "Tidak dikerjakan, melanggar, atau terlambat",
 };
-const SIFAT_CATATAN = ["Positif", "Negatif"];
-const SIFAT_BAWAAN = { "Prestasi": "Positif", "Inovasi": "Positif", "Kedisiplinan": "Positif", "Pembinaan": "Negatif", "Pelanggaran Ringan": "Negatif" };
-const CAT_MAGNITUDO = { "Prestasi": 5, "Inovasi": 5, "Kedisiplinan": 2, "Pembinaan": 3, "Pelanggaran Ringan": 5 };
-const sifatCatatan = (r) => r.sifat || SIFAT_BAWAAN[r.jenis] || "Positif";
-const skorCatatanItem = (r) => (sifatCatatan(r) === "Negatif" ? -1 : 1) * (CAT_MAGNITUDO[r.jenis] ?? 2);
 
 // Penilaian tugas oleh Kepala Sekolah + bobot akumulasi
 const PENILAIAN = [
@@ -1262,7 +1273,7 @@ function TabCatatan({ data, ta, sem }) {
   const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
 
   const simpan = () => {
-    if (!form.guruId || !form.tanggal || !form.deskripsi.trim()) return;
+    if (!form.guruId || !form.tanggal || !form.deskripsi.trim() || !form.nilai) return;
     if (form.id) aman(perbaruiDok(KOLEKSI.catatan, form.id, form));
     else aman(tambahDok(KOLEKSI.catatan, form));
     setForm(null);
@@ -1275,7 +1286,7 @@ function TabCatatan({ data, ta, sem }) {
           <option value="Semua">Semua guru</option>
           {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
         </select><Ikon I={ChevronDown} size={14} /></div>
-        <Tombol onClick={() => setForm({ guruId: data.guru[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), jenis: JENIS_CATATAN[0], sifat: SIFAT_BAWAAN[JENIS_CATATAN[0]], deskripsi: "", bukti: "" })}>
+        <Tombol onClick={() => setForm({ guruId: data.guru[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), jenis: JENIS_CATATAN[0], nilai: 3, deskripsi: "", bukti: "" })}>
           <Ikon I={Plus} size={15} /> Tulis Catatan
         </Tombol>
       </div>
@@ -1284,13 +1295,13 @@ function TabCatatan({ data, ta, sem }) {
         <div className="grid-catatan">
           {daftar.map((r) => {
             const Ic = IKON_CATATAN[r.jenis] || NotebookPen;
-            const sifat = sifatCatatan(r);
-            const si = SIFAT_INFO[sifat];
+            const ni = infoNilaiCatatan(r.nilai);
+            const skor = skorCatatanItem(r);
             return (
-              <Kartu key={r.id} className="catatan-kartu" style={{ borderTop: `3px solid ${si.warna}`, background: si.latar }}>
+              <Kartu key={r.id} className="catatan-kartu" style={{ borderTop: `3px solid ${ni.warna}`, background: ni.latar }}>
                 <div className="catatan-atas">
                   <span className="baris-lencana">
-                    <Lencana warna={si.warna}><Ikon I={sifat === "Positif" ? ThumbsUp : ThumbsDown} size={12} /> {sifat} ({skorCatatanItem(r) > 0 ? "+" : ""}{skorCatatanItem(r)})</Lencana>
+                    <Lencana warna={ni.warna}>{r.nilai} — {ni.label} ({skor > 0 ? "+" : ""}{skor})</Lencana>
                     <Lencana warna={CAT_WARNA[r.jenis]}><Ikon I={Ic} size={12} /> {r.jenis}</Lencana>
                   </span>
                   <span className="teks-kecil">{fmtTgl(r.tanggal)}</span>
@@ -1320,25 +1331,27 @@ function TabCatatan({ data, ta, sem }) {
               <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
             </div>
             <Kolom label="Jenis catatan">
-              <select value={form.jenis} onChange={(e) => setForm({ ...form, jenis: e.target.value, sifat: SIFAT_BAWAAN[e.target.value] })}>
+              <select value={form.jenis} onChange={(e) => setForm({ ...form, jenis: e.target.value })}>
                 {JENIS_CATATAN.map((j) => <option key={j}>{j}</option>)}
               </select>
             </Kolom>
-            <Kolom label="Sifat catatan (menentukan arah skor)">
-              <div className="sifat-pilih">
-                {SIFAT_CATATAN.map((s) => {
-                  const si = SIFAT_INFO[s];
-                  const aktif = sifatCatatan(form) === s;
+            <Kolom label="Nilai (1–5)" wajib>
+              <div className="nilai-catatan-pilih">
+                {NILAI_CATATAN.map((n) => {
+                  const aktif = Number(form.nilai) === n.nilai;
                   return (
-                    <button key={s} type="button"
-                      className={`sifat-tombol ${aktif ? "aktif" : ""}`}
-                      style={aktif ? { background: si.warna, borderColor: si.warna, color: "#fff" } : { color: si.warna, borderColor: `${si.warna}66` }}
-                      onClick={() => setForm({ ...form, sifat: s })}>
-                      <Ikon I={s === "Positif" ? ThumbsUp : ThumbsDown} size={14} /> {s}
+                    <button key={n.nilai} type="button"
+                      className={`nilai-catatan-tombol ${aktif ? "aktif" : ""}`}
+                      style={aktif ? { background: n.warna, borderColor: n.warna, color: "#fff" } : { color: n.warna, borderColor: `${n.warna}66`, background: n.latar }}
+                      onClick={() => setForm({ ...form, nilai: n.nilai })}
+                      title={KETERANGAN_NILAI_CATATAN[n.nilai]}>
+                      <strong>{n.nilai}</strong>
+                      <span>{n.label}</span>
                     </button>
                   );
                 })}
               </div>
+              {form.nilai && <p className="teks-kecil" style={{ marginTop: 6 }}>{KETERANGAN_NILAI_CATATAN[form.nilai]}</p>}
             </Kolom>
             <Kolom label="Deskripsi" wajib><textarea rows={3} value={form.deskripsi} onChange={(e) => setForm({ ...form, deskripsi: e.target.value })} /></Kolom>
             <Kolom label="Tautan bukti / dokumentasi"><input value={form.bukti} onChange={(e) => setForm({ ...form, bukti: e.target.value })} placeholder="https://…" /></Kolom>
@@ -1347,6 +1360,7 @@ function TabCatatan({ data, ta, sem }) {
             <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
             <Tombol onClick={simpan}>Simpan</Tombol>
           </div>
+
         </Modal>
       )}
     </div>
@@ -1379,8 +1393,8 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
       [p.kategoriPegawai === "Tenaga Administrasi" ? "PENILAIAN KINERJA ADMINISTRASI" : "SUPERVISI PEMBELAJARAN", "(skala 1-100)"],
       p.kategoriPegawai === "Tenaga Administrasi" ? ["Tanggal", "Kriteria", "Nilai", "Catatan"] : ["Tanggal", "Tahapan", "Nilai", "Catatan"],
       ...(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup).map((r) => [r.tanggal, r.kriteria || r.tahapan, r.nilai, r.catatan]), [],
-      ["CATATAN KINERJA"], ["Tanggal", "Jenis", "Sifat", "Deskripsi", "Skor"],
-      ...p.cat.map((r) => [r.tanggal, r.jenis, sifatCatatan(r), r.deskripsi, skorCatatanItem(r)]), [],
+      ["CATATAN KINERJA"], ["Tanggal", "Jenis", "Nilai", "Predikat", "Deskripsi", "Skor"],
+      ...p.cat.map((r) => [r.tanggal, r.jenis, r.nilai, infoNilaiCatatan(r.nilai).label, r.deskripsi, skorCatatanItem(r)]), [],
       ["REKAP SKOR"],
       ["Skor tugas struktural", p.skorStruktural],
       ["Skor tugas insidental", p.skorInsidental],
@@ -1445,7 +1459,11 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
           <div className="skor-rincian">
             <div><span>Struktural (bobot ×{BOBOT.struktural})</span><strong>{p.skorStruktural}</strong><em>Σ nilai × {BOBOT.struktural} · rata-rata {p.rataStruktural ? p.rataStruktural.toFixed(2) : "-"} dari {p.str.length} jabatan</em></div>
             <div><span>Insidental (bobot ×{BOBOT.insidental})</span><strong>{p.skorInsidental}</strong><em>Σ nilai × {BOBOT.insidental} · rata-rata {p.rataInsidental ? p.rataInsidental.toFixed(2) : "-"} dari {p.ins.length} tugas</em></div>
-            <div><span>Catatan Kinerja</span><strong style={{ color: p.skorCatatan < 0 ? SIFAT_INFO.Negatif.warna : SIFAT_INFO.Positif.warna }}>{p.skorCatatan >= 0 ? "+" : ""}{p.skorCatatan}</strong><em>{p.cat.filter((r) => sifatCatatan(r) === "Positif").length} positif · {p.cat.filter((r) => sifatCatatan(r) === "Negatif").length} negatif</em></div>
+            <div style={{ background: p.cat.length ? `${warnaSkor100(Math.round((p.cat.reduce((a, r) => a + Number(r.nilai || 3), 0) / p.cat.length) * 20))}18` : undefined }}>
+              <span>Catatan Kinerja</span>
+              <strong style={{ color: p.skorCatatan < 0 ? "#b23a3a" : p.skorCatatan > 0 ? "#1a5632" : undefined }}>{p.skorCatatan >= 0 ? "+" : ""}{p.skorCatatan}</strong>
+              <em>{p.cat.filter((r) => Number(r.nilai) >= 4).length} baik/sgt.baik · {p.cat.filter((r) => Number(r.nilai) === 3).length} standar · {p.cat.filter((r) => Number(r.nilai) <= 2).length} bermasalah</em>
+            </div>
             <div style={{ background: p.skorFungsional === null ? undefined : `${warnaSkor100(p.skorFungsional)}18` }}>
               <span>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (skala 1–100)</span>
               <strong style={{ color: p.skorFungsional === null ? undefined : warnaSkor100(p.skorFungsional) }}>{p.skorFungsional ?? "-"}</strong>
@@ -1743,13 +1761,16 @@ function Gaya() {
     .masuk-catatan { margin: 10px 0 0; font-size: 11.5px; color: var(--redup); line-height: 1.55; }
 
     .baris-lencana { display: flex; gap: 5px; flex-wrap: wrap; }
-    .sifat-pilih { display: flex; gap: 8px; }
-    .sifat-tombol {
-      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-      font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
-      padding: 9px 12px; border-radius: 8px; border: 1.5px solid; background: #fff;
+
+    .nilai-catatan-pilih { display: flex; gap: 6px; flex-wrap: wrap; }
+    .nilai-catatan-tombol {
+      flex: 1; min-width: 64px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+      font: inherit; cursor: pointer; padding: 8px 6px; border-radius: 9px; border: 1.5px solid;
     }
-    .sifat-tombol:focus-visible { outline: 2px solid var(--emas); outline-offset: 1px; }
+    .nilai-catatan-tombol strong { font-size: 17px; line-height: 1; }
+    .nilai-catatan-tombol span { font-size: 10px; font-weight: 600; text-align: center; line-height: 1.2; }
+    .nilai-catatan-tombol:focus-visible { outline: 2px solid var(--emas); outline-offset: 1px; }
+    @media (max-width: 480px) { .nilai-catatan-tombol { min-width: 0; } }
 
     .token-baris { display: flex; align-items: center; gap: 6px; }
     .token-baris input {
@@ -1883,7 +1904,8 @@ function Gaya() {
       .token-baris { flex-wrap: wrap; }
       .token-baris input { width: 100%; }
 
-      .sifat-pilih { flex-direction: column; }
+      .nilai-catatan-pilih { gap: 5px; }
+      .nilai-catatan-tombol { padding: 7px 4px; }
 
       /* Cegah auto-zoom iOS Safari saat fokus ke input (perlu font-size >= 16px) */
       .kolom input, .kolom select, .kolom textarea, .cari input,
