@@ -56,7 +56,10 @@ const KETERANGAN_NILAI_CATATAN = {
 // Satu skala yang sama supaya Kepala Sekolah tidak perlu berpindah logika penilaian.
 // ============================================================
 const PENILAIAN = NILAI_CATATAN; // alias historis, tetap dipakai di beberapa tempat
-const BOBOT = { struktural: 5, insidental: 2 }; // struktural berbobot lebih tinggi
+// Bobot akumulasi Skor Total — Supervisi Pembelajaran/Penilaian Administrasi (fungsional)
+// sengaja diberi bobot PALING TINGGI karena mengukur inti pekerjaan (mengajar/pelayanan langsung),
+// di atas tugas struktural, dan jauh di atas tugas insidental.
+const BOBOT = { fungsional: 10, struktural: 5, insidental: 2 };
 const labelNilai = (n) => infoNilaiCatatan(n)?.label && Number(n) >= 1 && Number(n) <= 5 ? infoNilaiCatatan(n).label : "Belum dinilai";
 
 const BULAN_TA = ["Jul", "Agu", "Sep", "Okt", "Nov", "Des", "Jan", "Feb", "Mar", "Apr", "Mei", "Jun"];
@@ -261,34 +264,41 @@ const hitungProfil = (guruId, data, ta, sem) => {
 
   const nCat = (j) => cat.filter((r) => r.jenis === j).length;
 
-  // Akumulasi penilaian KS: skor tugas = nilai (1–5) × bobot. Struktural berbobot lebih tinggi.
+  // Akumulasi penilaian KS: skor tugas = nilai (1–5) × bobot.
   const strDinilai = str.filter((r) => Number(r.nilai) > 0);
   const insDinilai = ins.filter((r) => Number(r.nilai) > 0);
   const skorStruktural = strDinilai.reduce((a, r) => a + Number(r.nilai) * BOBOT.struktural, 0);
   const skorInsidental = insDinilai.reduce((a, r) => a + Number(r.nilai) * BOBOT.insidental, 0);
   const skorCatatan = cat.reduce((a, r) => a + skorCatatanItem(r), 0);
-  const skorTotal = skorStruktural + skorInsidental + skorCatatan;
   const belumDinilai = (str.length - strDinilai.length) + (ins.length - insDinilai.length);
   const rata = (l) => (l.length ? l.reduce((a, r) => a + Number(r.nilai), 0) / l.length : 0);
   const rataStruktural = rata(strDinilai);
   const rataInsidental = rata(insDinilai);
 
-  // Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — rata-rata per tahapan, skala 1–5
+  const kategoriPegawai = g?.kategori || "Guru";
+
+  // Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — rata-rata per tahapan (skala 1–5)
+  // + skor tertimbang (bobot PALING TINGGI, karena mengukur inti pekerjaan mengajar)
   const perTahapanSupervisi = TAHAPAN_SUPERVISI.map((t) => {
     const l = sup.filter((r) => r.tahapan === t);
     return { tahapan: t, nilai: l.length ? Math.round(rata(l) * 10) / 10 : null, jumlah: l.length };
   });
   const rataSupervisi = sup.length ? Math.round(rata(sup) * 10) / 10 : null;
+  const skorSupervisi = sup.reduce((a, r) => a + Number(r.nilai || 0) * BOBOT.fungsional, 0);
 
-  // Penilaian Kinerja Administrasi (Tenaga Administrasi) — rata-rata per kriteria, skala 1–5
+  // Penilaian Kinerja Administrasi (Tenaga Administrasi) — rata-rata per kriteria (skala 1–5)
+  // + skor tertimbang, bobot sama tingginya (setara "inti pekerjaan" untuk tenaga administrasi)
   const perKriteriaAdministrasi = KRITERIA_ADMINISTRASI.map((k) => {
     const l = adm.filter((r) => r.kriteria === k);
     return { kriteria: k, nilai: l.length ? Math.round(rata(l) * 10) / 10 : null, jumlah: l.length };
   });
   const rataAdministrasi = adm.length ? Math.round(rata(adm) * 10) / 10 : null;
+  const skorAdministrasi = adm.reduce((a, r) => a + Number(r.nilai || 0) * BOBOT.fungsional, 0);
 
-  const kategoriPegawai = g?.kategori || "Guru";
   const skorFungsional = kategoriPegawai === "Tenaga Administrasi" ? rataAdministrasi : rataSupervisi;
+  const skorFungsionalBobot = kategoriPegawai === "Tenaga Administrasi" ? skorAdministrasi : skorSupervisi;
+
+  const skorTotal = skorStruktural + skorInsidental + skorCatatan + skorFungsionalBobot;
 
   // Radar 0–100 sederhana (semua komponen penilaian kini berskala 1–5, dikonversi ke 0–100 untuk radar)
   const radar = kategoriPegawai === "Tenaga Administrasi"
@@ -310,7 +320,8 @@ const hitungProfil = (guruId, data, ta, sem) => {
   return {
     g, str, ins, cat, sup, adm, totalJamIns, perKategori, perJenisCatatan, perBulan,
     skorStruktural, skorInsidental, skorCatatan, skorTotal, radar, belumDinilai, rataStruktural, rataInsidental,
-    perTahapanSupervisi, rataSupervisi, perKriteriaAdministrasi, rataAdministrasi, kategoriPegawai, skorFungsional,
+    perTahapanSupervisi, rataSupervisi, skorSupervisi, perKriteriaAdministrasi, rataAdministrasi, skorAdministrasi,
+    kategoriPegawai, skorFungsional, skorFungsionalBobot,
   };
 };
 
@@ -1023,7 +1034,7 @@ function Dasbor({ data, ta, sem, kePindah }) {
         <Kartu>
           <div className="kartu-kepala">
             <h2>Perbandingan Kontribusi Antarguru</h2>
-            <span className="sub">Skor agregat: struktural + insidental + catatan kinerja</span>
+            <span className="sub">Skor agregat: fungsional (bobot tertinggi) + struktural + insidental + catatan kinerja</span>
           </div>
           {banding.length === 0 ? <Kosong pesan="Belum ada data guru." /> : (
             <ResponsiveContainer width="100%" height={Math.max(200, banding.length * 52)}>
@@ -1651,7 +1662,8 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
       ["Skor tugas struktural", p.skorStruktural],
       ["Skor tugas insidental", p.skorInsidental],
       ["Skor catatan kinerja", p.skorCatatan],
-      ["SKOR TOTAL (struktural+insidental+catatan)", p.skorTotal],
+      [`Skor Supervisi/Administrasi (bobot x${BOBOT.fungsional}, tertinggi)`, p.skorFungsionalBobot],
+      ["SKOR TOTAL (fungsional+struktural+insidental+catatan)", p.skorTotal],
       [`Rata-rata ${p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (1-5)`, p.skorFungsional ?? "-"],
     ];
     unduhCSV(`laporan-${p.g.nama.split(",")[0].replace(/\W+/g, "-")}.csv`, baris);
@@ -1660,10 +1672,10 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
   const eksporSemua = () => {
     const baris = [
       ["REKAP KINERJA SELURUH GURU", data.pengaturan.namaSekolah, labelPeriode], [],
-      ["Nama", "Kategori", "NIK/NIP", "Mapel/Jabatan", "Jam", "Jml Tugas Struktural", "Rata2 Nilai Struktural", "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", "Tugas Belum Dinilai", "Jml Catatan", `Skor Struktural (x${BOBOT.struktural})`, `Skor Insidental (x${BOBOT.insidental})`, "Skor Catatan", "SKOR TOTAL", "Rata2 Supervisi/Administrasi (1-5)"],
+      ["Nama", "Kategori", "NIK/NIP", "Mapel/Jabatan", "Jam", `Skor Fungsional (x${BOBOT.fungsional}, tertinggi)`, "Rata2 Supervisi/Administrasi (1-5)", "Jml Tugas Struktural", "Rata2 Nilai Struktural", `Skor Struktural (x${BOBOT.struktural})`, "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", `Skor Insidental (x${BOBOT.insidental})`, "Tugas Belum Dinilai", "Jml Catatan", "Skor Catatan", "SKOR TOTAL"],
       ...urutkanNama(data.guru).map((g) => {
         const q = hitungProfil(g.id, data, ta, sem);
-        return [g.nama, q.kategoriPegawai, g.nik, g.mapel, g.jam, q.str.length, q.rataStruktural ? q.rataStruktural.toFixed(2) : "", q.ins.length, q.rataInsidental ? q.rataInsidental.toFixed(2) : "", q.totalJamIns, q.belumDinilai, q.cat.length, q.skorStruktural, q.skorInsidental, q.skorCatatan, q.skorTotal, q.skorFungsional ?? ""];
+        return [g.nama, q.kategoriPegawai, g.nik, g.mapel, g.jam, q.skorFungsionalBobot, q.skorFungsional ?? "", q.str.length, q.rataStruktural ? q.rataStruktural.toFixed(2) : "", q.skorStruktural, q.ins.length, q.rataInsidental ? q.rataInsidental.toFixed(2) : "", q.totalJamIns, q.skorInsidental, q.belumDinilai, q.cat.length, q.skorCatatan, q.skorTotal];
       }),
     ];
     unduhCSV("rekap-kinerja-seluruh-guru.csv", baris);
@@ -1709,17 +1721,17 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
             <div><span>Status</span><strong>{p.g.status}</strong></div>
           </div>
           <div className="skor-rincian">
+            <div style={{ background: p.skorFungsional === null ? undefined : `${warnaRataSkala5(p.skorFungsional)}18`, border: "1.5px solid", borderColor: p.skorFungsional === null ? "var(--garis)" : `${warnaRataSkala5(p.skorFungsional)}55` }}>
+              <span>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (bobot ×{BOBOT.fungsional} — tertinggi)</span>
+              <strong style={{ color: p.skorFungsional === null ? undefined : warnaRataSkala5(p.skorFungsional) }}>{p.skorFungsionalBobot}</strong>
+              <em>Σ nilai × {BOBOT.fungsional} · rata-rata {p.skorFungsional ?? "-"} ({labelRataSkala5(p.skorFungsional)})</em>
+            </div>
             <div><span>Struktural (bobot ×{BOBOT.struktural})</span><strong>{p.skorStruktural}</strong><em>Σ nilai × {BOBOT.struktural} · rata-rata {p.rataStruktural ? p.rataStruktural.toFixed(2) : "-"} dari {p.str.length} jabatan</em></div>
             <div><span>Insidental (bobot ×{BOBOT.insidental})</span><strong>{p.skorInsidental}</strong><em>Σ nilai × {BOBOT.insidental} · rata-rata {p.rataInsidental ? p.rataInsidental.toFixed(2) : "-"} dari {p.ins.length} tugas</em></div>
             <div style={{ background: p.cat.length ? `${warnaRataSkala5(p.cat.reduce((a, r) => a + Number(r.nilai || 3), 0) / p.cat.length)}18` : undefined }}>
               <span>Catatan Kinerja</span>
               <strong style={{ color: p.skorCatatan < 0 ? "#b23a3a" : p.skorCatatan > 0 ? "#1a5632" : undefined }}>{p.skorCatatan >= 0 ? "+" : ""}{p.skorCatatan}</strong>
               <em>{p.cat.filter((r) => Number(r.nilai) >= 4).length} baik/sgt.baik · {p.cat.filter((r) => Number(r.nilai) === 3).length} standar · {p.cat.filter((r) => Number(r.nilai) <= 2).length} bermasalah</em>
-            </div>
-            <div style={{ background: p.skorFungsional === null ? undefined : `${warnaRataSkala5(p.skorFungsional)}18` }}>
-              <span>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (skala 1–5)</span>
-              <strong style={{ color: p.skorFungsional === null ? undefined : warnaRataSkala5(p.skorFungsional) }}>{p.skorFungsional ?? "-"}</strong>
-              <em>{labelRataSkala5(p.skorFungsional)}</em>
             </div>
           </div>
           {p.belumDinilai > 0 && (
