@@ -59,6 +59,25 @@ export const buatAkunGuru = async ({ email, password, guruId, nama }) => {
   }
 };
 
+// Admin mengubah email dan/atau password akun GURU LAIN — client SDK Firebase tidak mengizinkan
+// ini secara langsung (hanya boleh mengubah akun sendiri), jadi permintaan dikirim ke fungsi
+// server (/api/admin-kelola-akun) yang memakai Firebase Admin SDK. Token login admin disertakan
+// supaya server bisa memverifikasi bahwa yang meminta memang admin.
+export const adminUbahAkunGuru = async ({ targetUid, guruId, emailBaru, passwordBaru }) => {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sesi admin tidak aktif. Silakan masuk ulang.");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/admin-kelola-akun", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ targetUid, guruId, emailBaru, passwordBaru }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch { /* respons kosong */ }
+  if (!res.ok) throw new Error(data?.error || `Gagal memperbarui akun (${res.status}).`);
+  return data;
+};
+
 export const langgananData = (sesi, cb) => {
   const stops = [];
   const state = { guru: [], struktural: [], insidental: [], catatan: [], supervisi: [], administrasi: [], akhlak: [], pengaturan: { namaSekolah: "SMP Al Hikmah IIBS Batu", ta: "2026/2027" } };
