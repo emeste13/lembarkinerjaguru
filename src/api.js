@@ -18,6 +18,7 @@ export const KOLEKSI = {
   supervisi: "supervisiPembelajaran",
   administrasi: "penilaianAdministrasi",
   akhlak: "penilaianAkhlak",
+  suratTugas: "pengajuanSuratTugas",
 };
 
 export const masuk = (email, password) => signInWithEmailAndPassword(auth, email, password);
@@ -80,9 +81,9 @@ export const adminUbahAkunGuru = async ({ targetUid, guruId, emailBaru, password
 
 export const langgananData = (sesi, cb) => {
   const stops = [];
-  const state = { guru: [], struktural: [], insidental: [], catatan: [], supervisi: [], administrasi: [], akhlak: [], pengaturan: { namaSekolah: "SMP Al Hikmah IIBS Batu", ta: "2026/2027" } };
+  const state = { guru: [], struktural: [], insidental: [], catatan: [], supervisi: [], administrasi: [], akhlak: [], suratTugas: [], pengaturan: { namaSekolah: "SMP Al Hikmah IIBS Batu", ta: "2026/2027" } };
   const kePeta = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const kirim = () => cb({ ...state, guru: [...state.guru], struktural: [...state.struktural], insidental: [...state.insidental], catatan: [...state.catatan], supervisi: [...state.supervisi], administrasi: [...state.administrasi], akhlak: [...state.akhlak] });
+  const kirim = () => cb({ ...state, guru: [...state.guru], struktural: [...state.struktural], insidental: [...state.insidental], catatan: [...state.catatan], supervisi: [...state.supervisi], administrasi: [...state.administrasi], akhlak: [...state.akhlak], suratTugas: [...state.suratTugas] });
 
   stops.push(onSnapshot(doc(db, "pengaturan", "utama"), (s) => {
     if (s.exists()) state.pengaturan = { ...state.pengaturan, ...s.data() };
@@ -97,6 +98,7 @@ export const langgananData = (sesi, cb) => {
     stops.push(onSnapshot(collection(db, KOLEKSI.supervisi), (s) => { state.supervisi = kePeta(s); kirim(); }));
     stops.push(onSnapshot(collection(db, KOLEKSI.administrasi), (s) => { state.administrasi = kePeta(s); kirim(); }));
     stops.push(onSnapshot(collection(db, KOLEKSI.akhlak), (s) => { state.akhlak = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(collection(db, KOLEKSI.suratTugas), (s) => { state.suratTugas = kePeta(s); kirim(); }));
   } else if (sesi.peran === "guru" && sesi.guruId) {
     const gid = sesi.guruId;
     stops.push(onSnapshot(doc(db, KOLEKSI.guru, gid), (s) => {
@@ -109,6 +111,7 @@ export const langgananData = (sesi, cb) => {
     stops.push(onSnapshot(q(KOLEKSI.supervisi), (s) => { state.supervisi = kePeta(s); kirim(); }));
     stops.push(onSnapshot(q(KOLEKSI.administrasi), (s) => { state.administrasi = kePeta(s); kirim(); }));
     stops.push(onSnapshot(q(KOLEKSI.akhlak), (s) => { state.akhlak = kePeta(s); kirim(); }));
+    stops.push(onSnapshot(q(KOLEKSI.suratTugas), (s) => { state.suratTugas = kePeta(s); kirim(); }));
   }
   return () => stops.forEach((stop) => stop());
 };
@@ -147,7 +150,7 @@ export const bukaKembaliPenilaianAkhlak = (docId) =>
 
 export const hapusGuruMenyeluruh = async (guruId) => {
   const batch = writeBatch(db);
-  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan, KOLEKSI.supervisi, KOLEKSI.administrasi, KOLEKSI.akhlak]) {
+  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan, KOLEKSI.supervisi, KOLEKSI.administrasi, KOLEKSI.akhlak, KOLEKSI.suratTugas]) {
     const s = await getDocs(query(collection(db, kol), where("guruId", "==", guruId)));
     s.docs.forEach((d) => batch.delete(d.ref));
   }
@@ -156,3 +159,48 @@ export const hapusGuruMenyeluruh = async (guruId) => {
   batch.delete(doc(db, KOLEKSI.guru, guruId));
   await batch.commit();
 };
+
+/* ---------- Pengajuan Surat Tugas ---------- */
+// Guru mengajukan → admin menyetujui (otomatis membuat Tugas Insidental, belum dinilai) atau menolak.
+
+export const ajukanSuratTugas = (guruId, isi) =>
+  addDoc(collection(db, KOLEKSI.suratTugas), bersih({
+    ...isi, guruId, status: "Menunggu Persetujuan", diajukanPada: new Date().toISOString(),
+  }));
+
+export const perbaruiSuratTugas = (id, patch) => updateDoc(doc(db, KOLEKSI.suratTugas, id), bersih(patch));
+export const batalkanSuratTugas = (id) => deleteDoc(doc(db, KOLEKSI.suratTugas, id));
+
+// Setujui: satu transaksi batch — buat dokumen Tugas Insidental baru (nilai belum diisi, menunggu
+// penilaian Kepala Sekolah seperti tugas insidental lainnya) SEKALIGUS menandai pengajuan Disetujui.
+export const setujuiSuratTugas = async (pengajuan, { kategori, jam }) => {
+  const batch = writeBatch(db);
+  const refInsidental = doc(collection(db, KOLEKSI.insidental));
+  const catatanGabungan = [
+    pengajuan.lokasi ? `Lokasi: ${pengajuan.lokasi}.` : "",
+    pengajuan.tanggalSelesai && pengajuan.tanggalSelesai !== pengajuan.tanggalMulai
+      ? `Periode: ${pengajuan.tanggalMulai} s.d. ${pengajuan.tanggalSelesai}.` : "",
+    pengajuan.deskripsi || "",
+  ].filter(Boolean).join(" ");
+
+  batch.set(refInsidental, bersih({
+    guruId: pengajuan.guruId,
+    tanggal: pengajuan.tanggalMulai,
+    kegiatan: pengajuan.namaAgenda,
+    peran: pengajuan.peran,
+    jam: Number(jam) || 0,
+    kategori,
+    catatan: catatanGabungan,
+    nilai: null,
+    asalSuratTugasId: pengajuan.id,
+  }));
+  batch.update(doc(db, KOLEKSI.suratTugas, pengajuan.id), {
+    status: "Disetujui", diprosesPada: new Date().toISOString(), tugasInsidentalId: refInsidental.id,
+  });
+  await batch.commit();
+};
+
+export const tolakSuratTugas = (id, catatanAdmin = "") =>
+  updateDoc(doc(db, KOLEKSI.suratTugas, id), {
+    status: "Ditolak", catatanAdmin, diprosesPada: new Date().toISOString(),
+  });

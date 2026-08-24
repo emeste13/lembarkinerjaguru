@@ -4,6 +4,7 @@ import {
   buatAkunGuru, adminUbahAkunGuru, langgananData, langgananUsers,
   tambahDok, perbaruiDok, hapusDok, hapusGuruMenyeluruh, simpanPengaturan, KOLEKSI,
   ajukanPenilaianAkhlak, validasiPenilaianAkhlak, bukaKembaliPenilaianAkhlak, idAkhlak,
+  ajukanSuratTugas, perbaruiSuratTugas, batalkanSuratTugas, setujuiSuratTugas, tolakSuratTugas,
 } from "./api";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -15,6 +16,7 @@ import {
   Plus, Pencil, Trash2, Download, Search, X, GraduationCap, Award, AlertTriangle,
   Lightbulb, Clock, ShieldCheck, ChevronDown, LogIn, LogOut, KeyRound, Eye, EyeOff,
   ThumbsUp, ThumbsDown, ClipboardCheck, FileSpreadsheet, Settings, Save, Heart, Lock, Undo2,
+  FileText, MapPin, XCircle, CheckCircle2,
 } from "lucide-react";
 
 /* ================= KONSTANTA ================= */
@@ -89,6 +91,15 @@ const DIMENSI_AKHLAK = [
   { kunci: "lingkungan", label: "Akhlak kepada Lingkungan", deskripsi: "Kebersihan, kepedulian terhadap fasilitas bersama dan alam sekitar" },
 ];
 const WARNA_STATUS_AKHLAK = { "Menunggu Validasi": "#c2912e", "Divalidasi": "#1a5632" };
+
+// Pengajuan Surat Tugas — guru mengajukan, admin menyetujui/menolak; disetujui = otomatis
+// menjadi Tugas Insidental baru (belum dinilai) di tab Tugas Insidental.
+const WARNA_STATUS_SURAT = { "Menunggu Persetujuan": "#c2912e", "Disetujui": "#1a5632", "Ditolak": "#b23a3a" };
+const jumlahHariSurat = (mulai, selesai) => {
+  if (!mulai) return 1;
+  const a = new Date(mulai + "T00:00:00"); const b = new Date((selesai || mulai) + "T00:00:00");
+  return Math.max(1, Math.round((b - a) / 86400000) + 1);
+};
 
 
 /* ================= UTILITAS ================= */
@@ -347,6 +358,7 @@ const TAB = [
   { id: "administrasi", label: "Penilaian Administrasi", I: FileSpreadsheet },
   { id: "catatan", label: "Catatan Kinerja", I: NotebookPen },
   { id: "akhlak", label: "Validasi Akhlak", I: Heart },
+  { id: "suratTugas", label: "Surat Tugas", I: FileText },
   { id: "laporan", label: "Laporan Guru", I: FileBarChart },
   { id: "akses", label: "Akses & Token", I: KeyRound },
   { id: "pengaturan", label: "Pengaturan Sekolah", I: Settings },
@@ -466,6 +478,7 @@ export default function AplikasiKinerjaGuru() {
           {tab === "administrasi" && <TabAdministrasi data={data} ta={ta} sem={sem} />}
           {tab === "catatan" && <TabCatatan data={data} ta={ta} sem={sem} />}
           {tab === "akhlak" && <TabValidasiAkhlak data={data} ta={ta} sem={sem} />}
+          {tab === "suratTugas" && <TabPersetujuanSuratTugas data={data} ta={ta} sem={sem} />}
           {tab === "laporan" && <TabLaporan data={data} ta={ta} sem={sem} />}
           {tab === "akses" && <TabAkun data={data} />}
           {tab === "pengaturan" && <TabPengaturan data={data} />}
@@ -474,6 +487,7 @@ export default function AplikasiKinerjaGuru() {
             ? (<>
                 <div className="info-realtime">Data diperbarui langsung — penilaian terbaru dari Kepala Sekolah tampil otomatis.</div>
                 <KartuAkhlakSaya guru={guruSesi} data={data} />
+                <KartuSuratTugasSaya guru={guruSesi} data={data} />
                 <TabLaporan data={data} ta={ta} sem={sem} kunciGuruId={guruSesi.id} />
               </>)
             : <Kartu><Kosong pesan="Data guru untuk akun ini belum tersedia. Hubungi Kepala Sekolah/admin." /></Kartu>
@@ -1069,6 +1083,254 @@ function FormValidasi({ onValidasi, onBatal }) {
   );
 }
 
+/* ================= SURAT TUGAS (Guru) ================= */
+
+function KartuSuratTugasSaya({ guru, data }) {
+  const [form, setForm] = useState(null);
+  const [proses, setProses] = useState(false);
+  const daftar = (data.suratTugas || []).filter((r) => r.guruId === guru.id)
+    .sort((a, b) => (b.diajukanPada || "").localeCompare(a.diajukanPada || ""));
+
+  const kosong = { namaAgenda: "", peran: "", tanggalMulai: new Date().toISOString().slice(0, 10), tanggalSelesai: "", lokasi: "", kategori: KATEGORI_INSIDENTAL[0], deskripsi: "", perkiraanJam: "" };
+
+  const simpan = async () => {
+    if (!form.namaAgenda.trim() || !form.peran.trim() || !form.tanggalMulai || !form.lokasi.trim() || !form.deskripsi.trim()) {
+      window.alert("Mohon lengkapi Nama Agenda, Peran, Tanggal Mulai, Lokasi, dan Deskripsi."); return;
+    }
+    if (form.tanggalSelesai && form.tanggalSelesai < form.tanggalMulai) {
+      window.alert("Tanggal selesai tidak boleh sebelum tanggal mulai."); return;
+    }
+    setProses(true);
+    try {
+      const isi = { ...form, tanggalSelesai: form.tanggalSelesai || form.tanggalMulai };
+      if (form.id) await perbaruiSuratTugas(form.id, isi);
+      else await ajukanSuratTugas(guru.id, isi);
+      setForm(null);
+    } catch (e) {
+      window.alert("Gagal menyimpan: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const batalkan = async (r) => {
+    if (!window.confirm("Batalkan pengajuan surat tugas ini?")) return;
+    try { await batalkanSuratTugas(r.id); } catch (e) { window.alert("Gagal membatalkan: " + (e?.message || e)); }
+  };
+
+  return (
+    <>
+      <Kartu style={{ marginBottom: 16 }}>
+        <div className="kartu-kepala baris">
+          <div>
+            <h2><Ikon I={FileText} size={16} style={{ verticalAlign: -3, marginRight: 6 }} />Pengajuan Surat Tugas</h2>
+            <span className="sub">Ajukan untuk kegiatan seperti seminar, workshop, atau kegiatan luar lainnya</span>
+          </div>
+          <Tombol kecil onClick={() => setForm({ ...kosong })}><Ikon I={Plus} size={14} /> Ajukan Surat Tugas</Tombol>
+        </div>
+
+        {daftar.length === 0 ? (
+          <Kosong pesan="Belum ada pengajuan surat tugas." />
+        ) : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Agenda</th><th>Tanggal</th><th>Lokasi</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td><strong>{r.namaAgenda}</strong><div className="teks-kecil">{r.peran}</div></td>
+                  <td className="teks-kecil nowrap">{fmtTgl(r.tanggalMulai)}{r.tanggalSelesai && r.tanggalSelesai !== r.tanggalMulai ? ` – ${fmtTgl(r.tanggalSelesai)}` : ""}</td>
+                  <td className="teks-kecil"><Ikon I={MapPin} size={11} style={{ verticalAlign: -2 }} /> {r.lokasi}</td>
+                  <td><Lencana warna={WARNA_STATUS_SURAT[r.status]}>{r.status}</Lencana>{r.catatanAdmin && r.status === "Ditolak" && <div className="teks-kecil" style={{ marginTop: 3 }}>{r.catatanAdmin}</div>}</td>
+                  <td className="aksi">
+                    {r.status === "Menunggu Persetujuan" && (
+                      <>
+                        <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...kosong, ...r })}><Ikon I={Pencil} size={14} /></button>
+                        <button className="btn-ikon bahaya" title="Batalkan" onClick={() => batalkan(r)}><Ikon I={Trash2} size={14} /></button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Pengajuan Surat Tugas" : "Ajukan Surat Tugas"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <Kolom label="Nama Agenda" wajib>
+              <input value={form.namaAgenda} onChange={(e) => setForm({ ...form, namaAgenda: e.target.value })} placeholder="mis. Workshop Kurikulum Merdeka" />
+            </Kolom>
+            <Kolom label="Peran Sebagai" wajib>
+              <input value={form.peran} onChange={(e) => setForm({ ...form, peran: e.target.value })} placeholder="mis. Peserta, Narasumber, Pendamping" />
+            </Kolom>
+            <div className="grid-2-form">
+              <Kolom label="Tanggal Mulai" wajib><input type="date" value={form.tanggalMulai} onChange={(e) => setForm({ ...form, tanggalMulai: e.target.value })} /></Kolom>
+              <Kolom label="Tanggal Selesai"><input type="date" value={form.tanggalSelesai} onChange={(e) => setForm({ ...form, tanggalSelesai: e.target.value })} placeholder="Sama dengan tanggal mulai bila kosong" /></Kolom>
+            </div>
+            <Kolom label="Lokasi" wajib>
+              <input value={form.lokasi} onChange={(e) => setForm({ ...form, lokasi: e.target.value })} placeholder="mis. Aula Sekolah, Malang, dsb." />
+            </Kolom>
+            <Kolom label="Kategori Kegiatan">
+              <select value={form.kategori} onChange={(e) => setForm({ ...form, kategori: e.target.value })}>
+                {KATEGORI_INSIDENTAL.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Deskripsi Kegiatan" wajib>
+              <textarea rows={3} value={form.deskripsi} onChange={(e) => setForm({ ...form, deskripsi: e.target.value })} placeholder="Jelaskan singkat kegiatannya — seminar, workshop, outbound, dsb." />
+            </Kolom>
+            <Kolom label="Perkiraan Total Jam Kegiatan (opsional)">
+              <input type="number" min="0" value={form.perkiraanJam} onChange={(e) => setForm({ ...form, perkiraanJam: e.target.value })} placeholder="Membantu Kepala Sekolah saat menyetujui" />
+            </Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>{proses ? "Menyimpan…" : "Ajukan"}</Tombol>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/* ================= PERSETUJUAN SURAT TUGAS (Admin) ================= */
+
+function TabPersetujuanSuratTugas({ data, ta, sem }) {
+  const [proses, setProses] = useState(null); // {tipe:'setuju'|'tolak', r}
+  const [fStatus, setFStatus] = useState("Menunggu Persetujuan");
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = (data.suratTugas || [])
+    .filter((r) => cocokFilter(r.tanggalMulai, ta, sem) || ta === "Semua")
+    .filter((r) => fStatus === "Semua" || r.status === fStatus)
+    .sort((a, b) => (b.diajukanPada || "").localeCompare(a.diajukanPada || ""));
+
+  const menunggu = (data.suratTugas || []).filter((r) => r.status === "Menunggu Persetujuan").length;
+
+  return (
+    <div className="susun-v">
+      <p className="keterangan">
+        Pengajuan surat tugas dari guru/tenaga kependidikan. Menyetujui akan <strong>otomatis membuat Tugas Insidental baru</strong>
+        (belum dinilai) di tab Tugas Insidental — tinggal Anda beri penilaian seperti biasa.
+      </p>
+
+      <div className="baris-alat">
+        <div className="pilih-bungkus">
+          <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+            <option value="Semua">Semua status</option>
+            <option value="Menunggu Persetujuan">Menunggu Persetujuan</option>
+            <option value="Disetujui">Disetujui</option>
+            <option value="Ditolak">Ditolak</option>
+          </select>
+          <Ikon I={ChevronDown} size={14} />
+        </div>
+        {menunggu > 0 && <Lencana warna="#c2912e"><Ikon I={AlertTriangle} size={12} /> {menunggu} menunggu persetujuan</Lencana>}
+      </div>
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada pengajuan surat tugas pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Pegawai</th><th>Agenda</th><th>Peran</th><th>Tanggal</th><th>Lokasi</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td><strong>{namaGuru(r.guruId)}</strong></td>
+                  <td>{r.namaAgenda}<div className="teks-kecil">{r.kategori}</div></td>
+                  <td className="teks-kecil">{r.peran}</td>
+                  <td className="teks-kecil nowrap">{fmtTgl(r.tanggalMulai)}{r.tanggalSelesai && r.tanggalSelesai !== r.tanggalMulai ? ` – ${fmtTgl(r.tanggalSelesai)}` : ""}</td>
+                  <td className="teks-kecil">{r.lokasi}</td>
+                  <td><Lencana warna={WARNA_STATUS_SURAT[r.status]}>{r.status}</Lencana></td>
+                  <td className="aksi">
+                    {r.status === "Menunggu Persetujuan" && (
+                      <Tombol kecil onClick={() => setProses({ r })}>Tinjau</Tombol>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {proses && <ModalTinjauSurat pengajuan={proses.r} namaGuru={namaGuru(proses.r.guruId)} onTutup={() => setProses(null)} />}
+    </div>
+  );
+}
+
+function ModalTinjauSurat({ pengajuan, namaGuru, onTutup }) {
+  const [kategori, setKategori] = useState(pengajuan.kategori || KATEGORI_INSIDENTAL[0]);
+  const [jam, setJam] = useState(pengajuan.perkiraanJam || Math.min(40, jumlahHariSurat(pengajuan.tanggalMulai, pengajuan.tanggalSelesai) * 8));
+  const [alasanTolak, setAlasanTolak] = useState("");
+  const [modeTolak, setModeTolak] = useState(false);
+  const [proses, setProses] = useState(false);
+
+  const setujui = async () => {
+    if (!jam || Number(jam) <= 0) { window.alert("Isi perkiraan jam kegiatan (lebih dari 0)."); return; }
+    setProses(true);
+    try {
+      await setujuiSuratTugas(pengajuan, { kategori, jam });
+      window.alert("Disetujui. Satu Tugas Insidental baru telah dibuat dan siap dinilai di tab Tugas Insidental.");
+      onTutup();
+    } catch (e) { window.alert("Gagal menyetujui: " + (e?.message || e)); }
+    finally { setProses(false); }
+  };
+
+  const tolak = async () => {
+    setProses(true);
+    try { await tolakSuratTugas(pengajuan.id, alasanTolak); onTutup(); }
+    catch (e) { window.alert("Gagal menolak: " + (e?.message || e)); }
+    finally { setProses(false); }
+  };
+
+  return (
+    <Modal judul={`Tinjau Surat Tugas — ${namaGuru}`} onTutup={onTutup} lebar={560}>
+      <div className="susun-v" style={{ gap: 6, marginBottom: 14 }}>
+        <div className="akhlak-detail-baris" style={{ borderLeft: "3px solid var(--hijau)" }}>
+          <strong>{pengajuan.namaAgenda}</strong>
+          <p className="teks-kecil" style={{ margin: "4px 0 0" }}>
+            Peran: {pengajuan.peran} · {fmtTgl(pengajuan.tanggalMulai)}{pengajuan.tanggalSelesai && pengajuan.tanggalSelesai !== pengajuan.tanggalMulai ? ` – ${fmtTgl(pengajuan.tanggalSelesai)}` : ""} · <Ikon I={MapPin} size={11} style={{ verticalAlign: -2 }} /> {pengajuan.lokasi}
+          </p>
+          <p className="teks-kecil" style={{ margin: "6px 0 0" }}>{pengajuan.deskripsi}</p>
+        </div>
+      </div>
+
+      {!modeTolak ? (
+        <>
+          <div className="form-grid">
+            <Kolom label="Kategori Tugas Insidental">
+              <select value={kategori} onChange={(e) => setKategori(e.target.value)}>
+                {KATEGORI_INSIDENTAL.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Jam (beban kerja untuk Tugas Insidental)" wajib>
+              <input type="number" min="1" value={jam} onChange={(e) => setJam(e.target.value)} />
+            </Kolom>
+          </div>
+          <p className="teks-kecil" style={{ color: "#6b7a6e" }}>
+            Menyetujui akan membuat satu Tugas Insidental baru (belum dinilai) — Anda beri penilaiannya nanti di tab Tugas Insidental.
+          </p>
+          <div className="form-aksi" style={{ justifyContent: "space-between" }}>
+            <button className="tautan-polos" style={{ color: "#b23a3a" }} onClick={() => setModeTolak(true)}><Ikon I={XCircle} size={14} /> Tolak Pengajuan</button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <Tombol varian="netral" onClick={onTutup}>Tutup</Tombol>
+              <Tombol onClick={setujui}><Ikon I={CheckCircle2} size={15} /> {proses ? "Memproses…" : "Setujui"}</Tombol>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <Kolom label="Alasan penolakan (opsional, akan terlihat oleh guru)">
+            <textarea rows={2} value={alasanTolak} onChange={(e) => setAlasanTolak(e.target.value)} />
+          </Kolom>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setModeTolak(false)}>Kembali</Tombol>
+            <Tombol onClick={tolak}>{proses ? "Memproses…" : "Konfirmasi Tolak"}</Tombol>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 /* ================= DASBOR ================= */
 
 function Dasbor({ data, ta, sem, kePindah }) {
@@ -1083,6 +1345,7 @@ function Dasbor({ data, ta, sem, kePindah }) {
   const belumDinilai = data.struktural.filter((r) => !Number(r.nilai)).length +
     totIns.filter((r) => !Number(r.nilai)).length;
   const akhlakMenunggu = (data.akhlak || []).filter((r) => r.status === "Menunggu Validasi").length;
+  const suratMenunggu = (data.suratTugas || []).filter((r) => r.status === "Menunggu Persetujuan").length;
 
   const statistik = [
     { label: "Guru terdaftar", nilai: data.guru.length, I: Users },
@@ -1091,6 +1354,7 @@ function Dasbor({ data, ta, sem, kePindah }) {
     { label: "Total jam tugas tambahan", nilai: totJam, I: Clock },
     { label: "Tugas belum dinilai", nilai: belumDinilai, I: AlertTriangle, sorot: belumDinilai > 0 },
     { label: "Akhlak menunggu validasi", nilai: akhlakMenunggu, I: Heart, sorot: akhlakMenunggu > 0, aksi: () => kePindah("akhlak") },
+    { label: "Surat tugas menunggu persetujuan", nilai: suratMenunggu, I: FileText, sorot: suratMenunggu > 0, aksi: () => kePindah("suratTugas") },
   ];
 
   const terbaru = [...totIns.map((r) => ({ ...r, tipe: "insidental" })), ...totCat.map((r) => ({ ...r, tipe: "catatan" }))]
