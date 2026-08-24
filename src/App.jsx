@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   masuk, keluar, pantauSesi, kirimResetPassword, gantiPasswordSendiri,
-  buatAkunGuru, langgananData, langgananUsers,
+  buatAkunGuru, adminUbahAkunGuru, langgananData, langgananUsers,
   tambahDok, perbaruiDok, hapusDok, hapusGuruMenyeluruh, simpanPengaturan, KOLEKSI,
   ajukanPenilaianAkhlak, validasiPenilaianAkhlak, bukaKembaliPenilaianAkhlak, idAkhlak,
 } from "./api";
@@ -574,6 +574,7 @@ function TanpaPeran({ email }) {
 function TabAkun({ data }) {
   const [users, setUsers] = useState([]);
   const [formAkun, setFormAkun] = useState(null);
+  const [kelola, setKelola] = useState(null); // {guru, akun} — kelola email/password akun guru tertentu
   const [pwLama, setPwLama] = useState("");
   const [pwBaru, setPwBaru] = useState("");
   const [pwKonfirm, setPwKonfirm] = useState("");
@@ -658,7 +659,14 @@ function TabAkun({ data }) {
                     : <Lencana warna="#8a948c">Belum ada akun</Lencana>}</td>
                   <td className="teks-kecil">{akun?.email || "-"}</td>
                   <td className="aksi">
-                    {akun && <Tombol kecil varian="netral" onClick={() => resetGuru(akun.email)}>Kirim Reset Password</Tombol>}
+                    {akun && (
+                      <>
+                        <Tombol kecil varian="netral" onClick={() => setKelola({ guru: g, akun })}>
+                          <Ikon I={KeyRound} size={13} /> Kelola Akun
+                        </Tombol>{" "}
+                        <Tombol kecil varian="netral" onClick={() => resetGuru(akun.email)}>Kirim Reset Password</Tombol>
+                      </>
+                    )}
                   </td>
                 </tr>
               );
@@ -694,7 +702,67 @@ function TabAkun({ data }) {
           )}
         </Modal>
       )}
+
+      {kelola && <ModalKelolaAkun guru={kelola.guru} akun={kelola.akun} onTutup={() => setKelola(null)} />}
     </div>
+  );
+}
+
+function ModalKelolaAkun({ guru, akun, onTutup }) {
+  const [emailBaru, setEmailBaru] = useState(akun.email || "");
+  const [passwordBaru, setPasswordBaru] = useState("");
+  const [tampilkanPw, setTampilkanPw] = useState(false);
+  const [pesan, setPesan] = useState("");
+  const [proses, setProses] = useState(false);
+
+  const emailBerubah = emailBaru.trim() && emailBaru.trim() !== akun.email;
+  const adaPerubahan = emailBerubah || passwordBaru.length > 0;
+
+  const simpan = async () => {
+    setPesan("");
+    if (!adaPerubahan) { setPesan("Belum ada perubahan untuk disimpan."); return; }
+    if (passwordBaru && passwordBaru.length < 6) { setPesan("Password baru minimal 6 karakter."); return; }
+    if (emailBerubah && !/^\S+@\S+\.\S+$/.test(emailBaru.trim())) { setPesan("Format email tidak valid."); return; }
+    if (!window.confirm(`Terapkan perubahan akun untuk ${guru.nama}? Guru perlu memakai ${emailBerubah ? "email" : ""}${emailBerubah && passwordBaru ? " dan " : ""}${passwordBaru ? "password" : ""} baru saat login berikutnya.`)) return;
+    setProses(true);
+    try {
+      await adminUbahAkunGuru({
+        targetUid: akun.uid, guruId: guru.id,
+        emailBaru: emailBerubah ? emailBaru.trim() : undefined,
+        passwordBaru: passwordBaru || undefined,
+      });
+      window.alert("Akun berhasil diperbarui. Sampaikan perubahan ini kepada guru yang bersangkutan.");
+      onTutup();
+    } catch (e) {
+      setPesan(e?.message || "Gagal memperbarui akun.");
+    } finally { setProses(false); }
+  };
+
+  return (
+    <Modal judul={`Kelola Akun — ${guru.nama}`} onTutup={onTutup}>
+      <p className="teks-kecil" style={{ marginBottom: 14, lineHeight: 1.6, color: "#6b7a6e" }}>
+        Perubahan di sini langsung berlaku pada akun login guru (lewat server, memakai Firebase Admin SDK).
+        Kosongkan kolom yang tidak ingin diubah.
+      </p>
+      <div className="form-grid">
+        <Kolom label="Email login"><input type="email" value={emailBaru} onChange={(e) => setEmailBaru(e.target.value)} /></Kolom>
+        <Kolom label="Password baru (opsional, min. 6 karakter)">
+          <div className="token-baris">
+            <input type={tampilkanPw ? "text" : "password"} value={passwordBaru} onChange={(e) => setPasswordBaru(e.target.value)} placeholder="Kosongkan bila tidak diubah" />
+            <button type="button" className="btn-ikon" title={tampilkanPw ? "Sembunyikan" : "Tampilkan"} onClick={() => setTampilkanPw(!tampilkanPw)}>
+              <Ikon I={tampilkanPw ? EyeOff : Eye} size={15} />
+            </button>
+          </div>
+        </Kolom>
+      </div>
+      <div className="form-aksi" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <span className="teks-kecil" style={{ color: "#b23a3a" }}>{pesan}</span>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Tombol varian="netral" onClick={onTutup}>Batal</Tombol>
+          <Tombol onClick={simpan}>{proses ? "Menyimpan…" : "Simpan Perubahan"}</Tombol>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
