@@ -1,0 +1,2673 @@
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  masuk, keluar, pantauSesi, kirimResetPassword, gantiPasswordSendiri,
+  buatAkunGuru, adminUbahAkunGuru, langgananData, langgananUsers,
+  tambahDok, perbaruiDok, hapusDok, hapusGuruMenyeluruh, simpanPengaturan, KOLEKSI,
+  ajukanPenilaianAkhlak, validasiPenilaianAkhlak, bukaKembaliPenilaianAkhlak, idAkhlak,
+  ajukanSuratTugas, perbaruiSuratTugas, batalkanSuratTugas, setujuiSuratTugas, tolakSuratTugas,
+  mintaIzinNotifikasi, statusIzinNotifikasi, kirimNotifikasiAman,
+} from "./api";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  PieChart, Pie, Cell, Legend, LabelList,
+} from "recharts";
+import {
+  Users, Briefcase, CalendarClock, NotebookPen, LayoutDashboard, FileBarChart,
+  Plus, Pencil, Trash2, Download, Search, X, GraduationCap, Award, AlertTriangle,
+  Lightbulb, Clock, ShieldCheck, ChevronDown, LogIn, LogOut, KeyRound, Eye, EyeOff,
+  ThumbsUp, ThumbsDown, ClipboardCheck, FileSpreadsheet, Settings, Save, Heart, Lock, Undo2,
+  FileText, MapPin, XCircle, CheckCircle2, Bell,
+} from "lucide-react";
+
+/* ================= KONSTANTA ================= */
+
+const KATEGORI_INSIDENTAL = ["Kepanitiaan", "Kedinasan", "Akademik", "Kesiswaan", "Humas/Marketing"];
+const KAT_WARNA = { "Kepanitiaan": "#1a5632", "Kedinasan": "#2e7d4f", "Akademik": "#c2912e", "Kesiswaan": "#4f7fae", "Humas/Marketing": "#8a5a9e" };
+
+const JENIS_CATATAN = ["Prestasi", "Inovasi", "Kedisiplinan", "Pembinaan", "Pelanggaran Ringan"];
+const CAT_WARNA = { "Prestasi": "#c2912e", "Inovasi": "#2e7d4f", "Kedisiplinan": "#1a5632", "Pembinaan": "#b06a2c", "Pelanggaran Ringan": "#b23a3a" };
+
+// Nilai catatan kinerja: skala 1–5 bergradasi warna (hijau = baik, merah = bermasalah).
+// Tidak lagi dipukul rata positif/negatif — setiap catatan dinilai tingkat kualitasnya.
+const NILAI_CATATAN = [
+  { nilai: 5, label: "Sangat Baik", warna: "#1a5632", latar: "#e6f0e9" },
+  { nilai: 4, label: "Baik", warna: "#3f8f5b", latar: "#eaf5ee" },
+  { nilai: 3, label: "Cukup / Standar", warna: "#c2912e", latar: "#fbf3e2" },
+  { nilai: 2, label: "Kurang", warna: "#c9702f", latar: "#fcece0" },
+  { nilai: 1, label: "Bermasalah", warna: "#b23a3a", latar: "#fbecec" },
+];
+const infoNilaiCatatan = (n) => NILAI_CATATAN.find((x) => x.nilai === Number(n)) || NILAI_CATATAN[2];
+// Untuk nilai rata-rata yang bisa pecahan (mis. 4.3) — dibulatkan ke pita warna terdekat
+const warnaRataSkala5 = (n) => (n === null || n === undefined ? "#8a948c" : n >= 4.5 ? "#1a5632" : n >= 3.5 ? "#3f8f5b" : n >= 2.5 ? "#c2912e" : n >= 1.5 ? "#c9702f" : "#b23a3a");
+const labelRataSkala5 = (n) => (n === null || n === undefined ? "Belum dinilai" : n >= 4.5 ? "Sangat Baik" : n >= 3.5 ? "Baik" : n >= 2.5 ? "Cukup / Standar" : n >= 1.5 ? "Kurang" : "Bermasalah");
+// Skor: 5→+4, 4→+2, 3→0, 2→−2, 1→−4 — simetris di sekitar "standar"
+const skorCatatanItem = (r) => (Number(r.nilai || 3) - 3) * 2;
+
+// Deskripsi bantuan saat memilih nilai, sesuai definisi Kepala Sekolah
+const KETERANGAN_NILAI_CATATAN = {
+  5: "Kinerja istimewa, melebihi harapan",
+  4: "Kinerja baik, sesuai harapan",
+  3: "Standar, tidak ada catatan khusus",
+  2: "Ada sedikit kekurangan/masalah",
+  1: "Tidak dikerjakan, melanggar, atau terlambat",
+};
+
+// ============================================================
+// SKALA PENILAIAN UNIVERSAL — dipakai di SEMUA modul: Tugas Struktural,
+// Tugas Insidental, Supervisi Pembelajaran, Penilaian Administrasi, Catatan Kinerja.
+// Satu skala yang sama supaya Kepala Sekolah tidak perlu berpindah logika penilaian.
+// ============================================================
+const PENILAIAN = NILAI_CATATAN; // alias historis, tetap dipakai di beberapa tempat
+// Bobot akumulasi Skor Total — Supervisi Pembelajaran/Penilaian Administrasi (fungsional)
+// sengaja diberi bobot PALING TINGGI karena mengukur inti pekerjaan (mengajar/pelayanan langsung),
+// di atas tugas struktural, dan jauh di atas tugas insidental.
+// Σ bobot = 20 (10+5+2+3), sehingga rumus "rata-rata (1–5) × bobot" untuk tiap komponen
+// menghasilkan Skor Total yang SELALU maksimal tepat 100 (saat semua rata-rata = 5),
+// berapa pun jumlah entri penilaian di masing-masing variabel — karena dipakai RATA-RATA,
+// bukan JUMLAH, sehingga banyaknya entri tidak lagi menggelembungkan skor.
+const BOBOT = { fungsional: 10, struktural: 5, insidental: 2, catatan: 3 };
+const labelNilai = (n) => infoNilaiCatatan(n)?.label && Number(n) >= 1 && Number(n) <= 5 ? infoNilaiCatatan(n).label : "Belum dinilai";
+
+const BULAN_TA = ["Jul", "Agu", "Sep", "Okt", "Nov", "Des", "Jan", "Feb", "Mar", "Apr", "Mei", "Jun"];
+const STATUS_PEG = ["GTY (Guru Tetap Yayasan)", "GTTY (Guru Tidak Tetap)", "PNS DPK", "Kontrak"];
+
+// Kategori pegawai — menentukan lembar penilaian fungsional yang relevan
+const KATEGORI_PEGAWAI = ["Guru", "Tenaga Kependidikan", "Tenaga Administrasi"];
+const bukanAdministrasi = (g) => (g?.kategori || "Guru") !== "Tenaga Administrasi";
+
+// Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — skala 1–5
+const TAHAPAN_SUPERVISI = ["Validasi Modul/Perencanaan Pembelajaran", "Pelaksanaan Pembelajaran", "Refleksi"];
+
+// Penilaian Kinerja Administrasi (Tenaga Administrasi) — skala 1–5
+const KRITERIA_ADMINISTRASI = ["Kedisiplinan & Kehadiran", "Ketelitian & Akurasi Kerja", "Pelayanan & Responsivitas", "Inisiatif & Kerja Sama", "Penguasaan Sistem/Administrasi"];
+
+// Penilaian Akhlak Mandiri — diisi guru sendiri, satu kali per semester, divalidasi (bukan dinilai ulang) oleh Kepala Sekolah.
+// Sengaja TIDAK masuk ke akumulasi Skor Total — akhlak yang sesungguhnya adalah urusan hati (lihat catatan di TabAkhlakSaya),
+// jadi ini murni indikator perilaku yang teramati, bersifat reflektif dan kualitatif, bukan alat pemeringkatan.
+const DIMENSI_AKHLAK = [
+  { kunci: "allah", label: "Akhlak kepada Allah", deskripsi: "Kedisiplinan ibadah, kekhusyukan yang teramati, semangat mendekatkan diri kepada-Nya" },
+  { kunci: "rasul", label: "Akhlak kepada Rasulullah ﷺ", deskripsi: "Menghidupkan sunnah, kecintaan yang termanifestasi dalam keseharian" },
+  { kunci: "sesama", label: "Akhlak kepada Sesama", deskripsi: "Adab kepada rekan kerja, siswa, dan wali santri; kesabaran serta keadilan" },
+  { kunci: "lingkungan", label: "Akhlak kepada Lingkungan", deskripsi: "Kebersihan, kepedulian terhadap fasilitas bersama dan alam sekitar" },
+];
+const WARNA_STATUS_AKHLAK = { "Menunggu Validasi": "#c2912e", "Divalidasi": "#1a5632" };
+
+// Pengajuan Surat Tugas — guru mengajukan, admin menyetujui/menolak; disetujui = otomatis
+// menjadi Tugas Insidental baru (belum dinilai) di tab Tugas Insidental.
+const WARNA_STATUS_SURAT = { "Menunggu Persetujuan": "#c2912e", "Disetujui": "#1a5632", "Ditolak": "#b23a3a" };
+const jumlahHariSurat = (mulai, selesai) => {
+  if (!mulai) return 1;
+  const a = new Date(mulai + "T00:00:00"); const b = new Date((selesai || mulai) + "T00:00:00");
+  return Math.max(1, Math.round((b - a) / 86400000) + 1);
+};
+
+
+/* ================= UTILITAS ================= */
+
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+
+// Urutkan daftar pegawai berdasarkan abjad nama (tidak mengubah data asli)
+const urutkanNama = (l) => [...l].sort((a, b) => (a.nama || "").localeCompare(b.nama || "", "id", { sensitivity: "base" }));
+
+const fmtTgl = (iso) => {
+  if (!iso) return "-";
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+};
+
+// Tahun ajaran: Juli–Juni. "2026/2027" berarti Jul 2026 s.d. Jun 2027.
+const tahunAjaranDariTanggal = (iso) => {
+  const d = new Date(iso + "T00:00:00");
+  const y = d.getFullYear(), m = d.getMonth(); // 0=Jan
+  return m >= 6 ? `${y}/${y + 1}` : `${y - 1}/${y}`;
+};
+
+const semesterDariTanggal = (iso) => {
+  const m = new Date(iso + "T00:00:00").getMonth();
+  return m >= 6 ? "Ganjil" : "Genap"; // Jul–Des Ganjil, Jan–Jun Genap
+};
+
+// index bulan dalam tahun ajaran: Jul=0 ... Jun=11
+const idxBulanTA = (iso) => {
+  const m = new Date(iso + "T00:00:00").getMonth();
+  return m >= 6 ? m - 6 : m + 6;
+};
+
+const cocokFilter = (iso, ta, sem) => {
+  if (!iso) return false;
+  if (ta !== "Semua" && tahunAjaranDariTanggal(iso) !== ta) return false;
+  if (sem !== "Semua" && semesterDariTanggal(iso) !== sem) return false;
+  return true;
+};
+
+const unduhCSV = (nama, baris) => {
+  const esc = (v) => {
+    const s = String(v ?? "");
+    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const teks = "\uFEFF" + baris.map((r) => r.map(esc).join(";")).join("\r\n");
+  const blob = new Blob([teks], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nama; a.click();
+  URL.revokeObjectURL(url);
+};
+
+/* ================= KOMPONEN DASAR ================= */
+
+
+// Logo resmi SMP Al Hikmah IIBS Batu (lambang lingkaran)
+const LOGO_SEKOLAH_B64 = "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";
+const LogoSekolah = ({ size = 40 }) => (
+  <img
+    src={`data:image/png;base64,${LOGO_SEKOLAH_B64}`}
+    alt="Logo SMP Al Hikmah IIBS Batu"
+    width={size} height={size}
+    style={{ display: "block", borderRadius: "50%", objectFit: "contain" }}
+  />
+);
+
+const Ikon = ({ I, size = 16 }) => <I size={size} strokeWidth={2} style={{ flexShrink: 0 }} />;
+
+const Tombol = ({ children, varian = "utama", onClick, kecil, type = "button", title }) => (
+  <button type={type} onClick={onClick} title={title} className={`btn btn-${varian} ${kecil ? "btn-kecil" : ""}`}>
+    {children}
+  </button>
+);
+
+const Kartu = ({ children, className = "", style, onClick }) => (
+  <div className={`kartu ${className}`} style={style} onClick={onClick}>{children}</div>
+);
+
+const Kolom = ({ label, children, wajib }) => (
+  <label className="kolom">
+    <span className="kolom-label">{label}{wajib && <em> *</em>}</span>
+    {children}
+  </label>
+);
+
+const Modal = ({ judul, onTutup, children, lebar = 560 }) => (
+  <div className="modal-latar" onMouseDown={(e) => e.target === e.currentTarget && onTutup()}>
+    <div className="modal" style={{ maxWidth: lebar }} role="dialog" aria-modal="true">
+      <div className="modal-kepala">
+        <h3>{judul}</h3>
+        <button className="btn-ikon" onClick={onTutup} aria-label="Tutup"><Ikon I={X} size={18} /></button>
+      </div>
+      <div className="modal-isi">{children}</div>
+    </div>
+  </div>
+);
+
+const Kosong = ({ pesan, aksi }) => (
+  <div className="kosong">
+    <p>{pesan}</p>
+    {aksi}
+  </div>
+);
+
+const Lencana = ({ warna, children }) => (
+  <span className="lencana" style={{ background: `${warna}18`, color: warna, borderColor: `${warna}55` }}>{children}</span>
+);
+
+const NILAI_WARNA = { 5: "#1a5632", 4: "#3f8f5b", 3: "#c2912e", 2: "#c9702f", 1: "#b23a3a", 0: "#8a948c" };
+
+// Dropdown penilaian sekali klik — Kepala Sekolah cukup memilih dari daftar (skala 1–5, sama di semua modul)
+const NilaiPilih = ({ nilai, onUbah, judul = "Penilaian Kepala Sekolah" }) => (
+  <select
+    className="nilai-pilih" title={judul} aria-label={judul}
+    style={{ color: NILAI_WARNA[nilai || 0], borderColor: `${NILAI_WARNA[nilai || 0]}66`, background: `${NILAI_WARNA[nilai || 0]}10` }}
+    value={nilai || ""}
+    onChange={(e) => onUbah(e.target.value ? Number(e.target.value) : null)}
+  >
+    <option value="">Belum dinilai</option>
+    {PENILAIAN.map((p) => <option key={p.nilai} value={p.nilai}>{p.nilai} — {p.label}</option>)}
+  </select>
+);
+
+const LencanaNilai = ({ nilai }) => (
+  <Lencana warna={NILAI_WARNA[nilai || 0]}>{nilai ? `${nilai} — ` : ""}{labelNilai(nilai)}</Lencana>
+);
+
+// Pemilih skala 1–5 bergradasi warna — dipakai di Tugas Struktural/Insidental (dalam modal),
+// Supervisi Pembelajaran, Penilaian Administrasi, dan Catatan Kinerja. Satu tampilan untuk semua.
+const PemilihSkala5 = ({ nilai, onUbah, keterangan = KETERANGAN_NILAI_CATATAN }) => (
+  <div>
+    <div className="nilai-catatan-pilih">
+      {NILAI_CATATAN.map((n) => {
+        const aktif = Number(nilai) === n.nilai;
+        return (
+          <button key={n.nilai} type="button"
+            className={`nilai-catatan-tombol ${aktif ? "aktif" : ""}`}
+            style={aktif ? { background: n.warna, borderColor: n.warna, color: "#fff" } : { color: n.warna, borderColor: `${n.warna}66`, background: n.latar }}
+            onClick={() => onUbah(n.nilai)}
+            title={keterangan[n.nilai]}>
+            <strong>{n.nilai}</strong>
+            <span>{n.label}</span>
+          </button>
+        );
+      })}
+    </div>
+    {nilai && keterangan[nilai] && <p className="teks-kecil" style={{ marginTop: 6 }}>{keterangan[nilai]}</p>}
+  </div>
+);
+
+const LencanaSkala5 = ({ nilai }) => {
+  const info = infoNilaiCatatan(nilai);
+  return <Lencana warna={info.warna}>{nilai} — {info.label}</Lencana>;
+};
+
+/* ================= PERHITUNGAN SKOR ================= */
+
+const hitungProfil = (guruId, data, ta, sem) => {
+  const str = data.struktural.filter((s) => s.guruId === guruId);
+  const ins = data.insidental.filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
+  const cat = data.catatan.filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
+  const sup = (data.supervisi || []).filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
+  const adm = (data.administrasi || []).filter((r) => r.guruId === guruId && cocokFilter(r.tanggal, ta, sem));
+  const g = data.guru.find((x) => x.id === guruId);
+
+  const totalJamIns = ins.reduce((a, b) => a + (Number(b.jam) || 0), 0);
+  const perKategori = KATEGORI_INSIDENTAL.map((k) => ({
+    kategori: k, jumlah: ins.filter((r) => r.kategori === k).length,
+    jam: ins.filter((r) => r.kategori === k).reduce((a, b) => a + (Number(b.jam) || 0), 0),
+  }));
+  const perJenisCatatan = JENIS_CATATAN.map((j) => ({ jenis: j, jumlah: cat.filter((r) => r.jenis === j).length }));
+  const perBulan = BULAN_TA.map((b, idx) => ({
+    bulan: b,
+    jam: ins.filter((r) => idxBulanTA(r.tanggal) === idx).reduce((a, x) => a + (Number(x.jam) || 0), 0),
+  }));
+
+  const nCat = (j) => cat.filter((r) => r.jenis === j).length;
+  const rata = (l) => (l.length ? l.reduce((a, r) => a + Number(r.nilai), 0) / l.length : 0);
+
+  // Akumulasi penilaian KS: skor komponen = RATA-RATA nilai (1–5) × bobot.
+  // Sengaja rata-rata, bukan jumlah — supaya banyaknya entri penilaian tidak menggelembungkan skor,
+  // dan Skor Total selalu punya batas atas yang pasti (lihat definisi BOBOT di atas).
+  const strDinilai = str.filter((r) => Number(r.nilai) > 0);
+  const insDinilai = ins.filter((r) => Number(r.nilai) > 0);
+  const rataStruktural = rata(strDinilai);
+  const rataInsidental = rata(insDinilai);
+  const skorStruktural = Math.round(rataStruktural * BOBOT.struktural * 10) / 10;
+  const skorInsidental = Math.round(rataInsidental * BOBOT.insidental * 10) / 10;
+  const belumDinilai = (str.length - strDinilai.length) + (ins.length - insDinilai.length);
+
+  // Catatan Kinerja — rata-rata nilai (1–5) semua catatan × bobot, untuk Skor Total.
+  // Badge +/− pada tiap kartu catatan (skorCatatanItem) tetap dipakai hanya sebagai indikator visual per-item.
+  const rataCatatan = rata(cat);
+  const skorCatatan = Math.round(rataCatatan * BOBOT.catatan * 10) / 10;
+  const netCatatan = cat.reduce((a, r) => a + skorCatatanItem(r), 0); // untuk referensi/CSV, tidak masuk Skor Total
+
+  const kategoriPegawai = g?.kategori || "Guru";
+
+  // Supervisi Pembelajaran (Guru & Tenaga Kependidikan) — rata-rata per tahapan (skala 1–5)
+  // + skor tertimbang = rata-rata keseluruhan × bobot (bobot PALING TINGGI, inti pekerjaan mengajar)
+  const perTahapanSupervisi = TAHAPAN_SUPERVISI.map((t) => {
+    const l = sup.filter((r) => r.tahapan === t);
+    return { tahapan: t, nilai: l.length ? Math.round(rata(l) * 10) / 10 : null, jumlah: l.length };
+  });
+  const rataSupervisi = sup.length ? Math.round(rata(sup) * 10) / 10 : null;
+  const skorSupervisi = Math.round((rataSupervisi || 0) * BOBOT.fungsional * 10) / 10;
+
+  // Penilaian Kinerja Administrasi (Tenaga Administrasi) — rata-rata per kriteria (skala 1–5)
+  // + skor tertimbang, bobot sama tingginya (setara "inti pekerjaan" untuk tenaga administrasi)
+  const perKriteriaAdministrasi = KRITERIA_ADMINISTRASI.map((k) => {
+    const l = adm.filter((r) => r.kriteria === k);
+    return { kriteria: k, nilai: l.length ? Math.round(rata(l) * 10) / 10 : null, jumlah: l.length };
+  });
+  const rataAdministrasi = adm.length ? Math.round(rata(adm) * 10) / 10 : null;
+  const skorAdministrasi = Math.round((rataAdministrasi || 0) * BOBOT.fungsional * 10) / 10;
+
+  const skorFungsional = kategoriPegawai === "Tenaga Administrasi" ? rataAdministrasi : rataSupervisi;
+  const skorFungsionalBobot = kategoriPegawai === "Tenaga Administrasi" ? skorAdministrasi : skorSupervisi;
+
+  const skorTotal = skorStruktural + skorInsidental + skorCatatan + skorFungsionalBobot;
+
+  // Radar 0–100 sederhana (semua komponen penilaian kini berskala 1–5, dikonversi ke 0–100 untuk radar)
+  const radar = kategoriPegawai === "Tenaga Administrasi"
+    ? [
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.round((rataStruktural / 5) * 100) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.round((rataInsidental / 5) * 100) },
+        { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
+        ...perKriteriaAdministrasi.filter((k) => k.nilai !== null).map((k) => ({ dimensi: k.kriteria.split(" ")[0], nilai: Math.round((k.nilai / 5) * 100) })),
+      ]
+    : [
+        { dimensi: "Beban Mengajar", nilai: Math.min(100, Math.round(((g?.jam || 0) / 24) * 100)) },
+        { dimensi: "Tugas Struktural", nilai: str.length === 0 ? 0 : Math.round((rataStruktural / 5) * 100) },
+        { dimensi: "Kontribusi Insidental", nilai: ins.length === 0 ? 0 : Math.round((rataInsidental / 5) * 100) },
+        { dimensi: "Kedisiplinan", nilai: Math.max(0, Math.min(100, 60 + nCat("Kedisiplinan") * 15 - nCat("Pelanggaran Ringan") * 20 - nCat("Pembinaan") * 10)) },
+        { dimensi: "Inovasi", nilai: Math.min(100, nCat("Inovasi") * 30) },
+        { dimensi: "Supervisi Pembelajaran", nilai: rataSupervisi === null ? 0 : Math.round((rataSupervisi / 5) * 100) },
+      ];
+
+  return {
+    g, str, ins, cat, sup, adm, totalJamIns, perKategori, perJenisCatatan, perBulan,
+    skorStruktural, skorInsidental, skorCatatan, rataCatatan, netCatatan, skorTotal, radar, belumDinilai, rataStruktural, rataInsidental,
+    perTahapanSupervisi, rataSupervisi, skorSupervisi, perKriteriaAdministrasi, rataAdministrasi, skorAdministrasi,
+    kategoriPegawai, skorFungsional, skorFungsionalBobot,
+  };
+};
+
+/* ================= APLIKASI UTAMA ================= */
+
+const TAB = [
+  { id: "dasbor", label: "Dasbor", I: LayoutDashboard },
+  { id: "guru", label: "Data Guru", I: Users },
+  { id: "struktural", label: "Tugas Struktural", I: Briefcase },
+  { id: "insidental", label: "Tugas Insidental", I: CalendarClock },
+  { id: "supervisi", label: "Supervisi Pembelajaran", I: ClipboardCheck },
+  { id: "administrasi", label: "Penilaian Administrasi", I: FileSpreadsheet },
+  { id: "catatan", label: "Catatan Kinerja", I: NotebookPen },
+  { id: "akhlak", label: "Validasi Akhlak", I: Heart },
+  { id: "suratTugas", label: "Surat Tugas", I: FileText },
+  { id: "laporan", label: "Laporan Guru", I: FileBarChart },
+  { id: "akses", label: "Akses & Token", I: KeyRound },
+  { id: "pengaturan", label: "Pengaturan Sekolah", I: Settings },
+];
+
+export default function AplikasiKinerjaGuru() {
+  const [sesi, setSesi] = useState(undefined);
+  const [data, setData] = useState(null);
+  const [tab, setTab] = useState("dasbor");
+  const [ta, setTa] = useState("2026/2027");
+  const [sem, setSem] = useState("Semua");
+  const [keluarKarenaIdle, setKeluarKarenaIdle] = useState(false);
+  const taTersinkron = React.useRef(false);
+
+  useEffect(() => {
+    if (data?.pengaturan?.ta && !taTersinkron.current) {
+      setTa(data.pengaturan.ta);
+      taTersinkron.current = true;
+    }
+  }, [data?.pengaturan?.ta]);
+
+  useEffect(() => pantauSesi(setSesi), []);
+
+  // Auto-logout setelah 2 jam tidak ada aktivitas (mouse, keyboard, sentuhan, scroll)
+  useEffect(() => {
+    if (!sesi || sesi.peran === "tanpa-peran") return;
+    const BATAS_IDLE_MS = 2 * 60 * 60 * 1000; // 2 jam
+    let waktu;
+    const atur = () => {
+      clearTimeout(waktu);
+      waktu = setTimeout(() => {
+        keluar();
+        setKeluarKarenaIdle(true);
+      }, BATAS_IDLE_MS);
+    };
+    const peristiwa = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "wheel"];
+    peristiwa.forEach((p) => window.addEventListener(p, atur, { passive: true }));
+    atur();
+    return () => {
+      clearTimeout(waktu);
+      peristiwa.forEach((p) => window.removeEventListener(p, atur));
+    };
+  }, [sesi?.uid]);
+
+  useEffect(() => {
+    if (!sesi || sesi.peran === "tanpa-peran") { setData(null); return; }
+    setData(null);
+    return langgananData(sesi, setData);
+  }, [sesi?.uid, sesi?.peran, sesi?.guruId]);
+
+  const daftarTA = useMemo(() => {
+    const s = new Set(["2026/2027"]);
+    if (data) [...data.insidental, ...data.catatan].forEach((r) => r.tanggal && s.add(tahunAjaranDariTanggal(r.tanggal)));
+    return [...s].sort();
+  }, [data]);
+
+  if (sesi === undefined) return (<><Gaya /><div className="muat">Memeriksa sesi…</div></>);
+  if (sesi === null) return (<><Gaya /><Masuk keluarKarenaIdle={keluarKarenaIdle} /></>);
+  if (sesi.peran === "tanpa-peran") return (<><Gaya /><TanpaPeran email={sesi.email} /></>);
+  if (!data) return (<><Gaya /><div className="muat">Memuat data dari server…</div></>);
+
+  const admin = sesi.peran === "admin";
+  const guruSesi = admin ? null : data.guru.find((g) => g.id === sesi.guruId);
+
+  return (
+    <div className="app">
+      <Gaya />
+      <header className="kepala">
+        <div className="kepala-merek">
+          <div className="kepala-logo"><LogoSekolah size={40} /></div>
+          <div>
+            <h1>Catatan Kinerja Guru</h1>
+            <p>{data.pengaturan.namaSekolah} · Tahun Ajaran {ta === "Semua" ? "Semua" : ta}</p>
+          </div>
+        </div>
+        <div className="kepala-filter">
+          <div className="pilih-bungkus">
+            <select value={ta} onChange={(e) => setTa(e.target.value)} aria-label="Tahun ajaran">
+              <option value="Semua">Semua TA</option>
+              {daftarTA.map((t) => <option key={t} value={t}>TA {t}</option>)}
+            </select>
+            <Ikon I={ChevronDown} size={14} />
+          </div>
+          <div className="pilih-bungkus">
+            <select value={sem} onChange={(e) => setSem(e.target.value)} aria-label="Semester">
+              <option value="Semua">Semua Semester</option>
+              <option value="Ganjil">Ganjil (Jul–Des)</option>
+              <option value="Genap">Genap (Jan–Jun)</option>
+            </select>
+            <Ikon I={ChevronDown} size={14} />
+          </div>
+          <div className="sesi-info">
+            <span className="sesi-peran">{admin ? (sesi.nama || "Kepala Sekolah / Admin") : (guruSesi?.nama || sesi.nama || "Guru")}</span>
+            <button className="btn btn-keluar" onClick={() => { keluar(); setTab("dasbor"); }}><Ikon I={LogOut} size={14} /> Keluar</button>
+          </div>
+        </div>
+      </header>
+
+      {admin && (
+        <nav className="navigasi" role="tablist">
+          {TAB.map((t) => (
+            <button key={t.id} role="tab" aria-selected={tab === t.id}
+              className={`nav-item ${tab === t.id ? "aktif" : ""}`} onClick={() => setTab(t.id)}>
+              <Ikon I={t.I} size={16} /><span>{t.label}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+
+      <BannerNotifikasi />
+
+      <main className="isi">
+        {admin ? (<>
+          {tab === "dasbor" && <Dasbor data={data} ta={ta} sem={sem} kePindah={setTab} />}
+          {tab === "guru" && <TabGuru data={data} />}
+          {tab === "struktural" && <TabStruktural data={data} />}
+          {tab === "insidental" && <TabInsidental data={data} ta={ta} sem={sem} />}
+          {tab === "supervisi" && <TabSupervisi data={data} ta={ta} sem={sem} />}
+          {tab === "administrasi" && <TabAdministrasi data={data} ta={ta} sem={sem} />}
+          {tab === "catatan" && <TabCatatan data={data} ta={ta} sem={sem} />}
+          {tab === "akhlak" && <TabValidasiAkhlak data={data} ta={ta} sem={sem} />}
+          {tab === "suratTugas" && <TabPersetujuanSuratTugas data={data} ta={ta} sem={sem} />}
+          {tab === "laporan" && <TabLaporan data={data} ta={ta} sem={sem} />}
+          {tab === "akses" && <TabAkun data={data} />}
+          {tab === "pengaturan" && <TabPengaturan data={data} />}
+        </>) : (
+          guruSesi
+            ? (<>
+                <div className="info-realtime">Data diperbarui langsung — penilaian terbaru dari Kepala Sekolah tampil otomatis.</div>
+                <KartuAkhlakSaya guru={guruSesi} data={data} />
+                <KartuSuratTugasSaya guru={guruSesi} data={data} />
+                <TabLaporan data={data} ta={ta} sem={sem} kunciGuruId={guruSesi.id} />
+              </>)
+            : <Kartu><Kosong pesan="Data guru untuk akun ini belum tersedia. Hubungi Kepala Sekolah/admin." /></Kartu>
+        )}
+      </main>
+
+      <footer className="kaki">Tersambung ke server · pembaruan realtime · Filter aktif: TA {ta} · Semester {sem}</footer>
+    </div>
+  );
+}
+
+const aman = (janji) => Promise.resolve(janji).catch((e) =>
+  window.alert("Operasi gagal: " + (e?.message || e)));
+
+/* ================= BANNER AKTIFKAN NOTIFIKASI ================= */
+
+function BannerNotifikasi() {
+  const [status, setStatus] = useState("default");
+  const [proses, setProses] = useState(false);
+  const [tutup, setTutup] = useState(false);
+
+  useEffect(() => { setStatus(statusIzinNotifikasi()); }, []);
+
+  const aktifkan = async () => {
+    setProses(true);
+    try {
+      await mintaIzinNotifikasi();
+      setStatus("granted");
+    } catch (e) {
+      window.alert(e?.message || "Gagal mengaktifkan notifikasi.");
+      setStatus(statusIzinNotifikasi());
+    } finally { setProses(false); }
+  };
+
+  if (tutup || status !== "default") return null; // tidak tampil bila sudah diizinkan/ditolak/tak didukung
+
+  return (
+    <div className="banner-notif">
+      <Ikon I={Bell} size={16} />
+      <span>Aktifkan notifikasi supaya Anda langsung diberi tahu saat ada pembaruan penting — tanpa perlu buka aplikasi terus-menerus.</span>
+      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <Tombol kecil onClick={aktifkan}>{proses ? "Memproses…" : "Aktifkan"}</Tombol>
+        <button className="btn-ikon" title="Tutup" onClick={() => setTutup(true)}><Ikon I={X} size={15} /></button>
+      </div>
+    </div>
+  );
+}
+
+/* ================= HALAMAN MASUK ================= */
+
+function Masuk({ keluarKarenaIdle = false }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [galat, setGalat] = useState("");
+  const [proses, setProses] = useState(false);
+
+  const kirim = async () => {
+    if (!email.trim() || !password) return;
+    setProses(true); setGalat("");
+    try {
+      await masuk(email.trim(), password);
+    } catch (e) {
+      const kode = e?.code || "";
+      setGalat(
+        kode.includes("invalid-credential") || kode.includes("wrong-password") || kode.includes("user-not-found")
+          ? "Email atau password salah."
+          : kode.includes("too-many-requests")
+            ? "Terlalu banyak percobaan. Coba lagi beberapa menit lagi."
+            : "Gagal masuk: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const lupa = async () => {
+    if (!email.trim()) { setGalat("Isi email terlebih dahulu, lalu klik lupa password."); return; }
+    try {
+      await kirimResetPassword(email.trim());
+      setGalat("");
+      window.alert("Tautan reset password telah dikirim ke " + email.trim() + ". Periksa kotak masuk/spam.");
+    } catch (e) { setGalat("Gagal mengirim email reset: " + (e?.message || e)); }
+  };
+
+  return (
+    <div className="masuk-latar">
+      <div className="masuk-kotak">
+        <div style={{ margin: "0 auto" }}><LogoSekolah size={64} /></div>
+        <h1>Catatan Kinerja Guru</h1>
+        <p className="sub">SMP Al Hikmah IIBS Batu</p>
+        {keluarKarenaIdle && (
+          <p className="masuk-idle"><Ikon I={AlertTriangle} size={14} /> Anda keluar otomatis karena tidak ada aktivitas selama 2 jam. Silakan masuk kembali.</p>
+        )}
+        <label className="kolom" style={{ textAlign: "left", marginTop: 18 }}>
+          <span className="kolom-label">Email</span>
+          <input type="email" value={email} autoFocus placeholder="nama@sekolah.sch.id"
+            onChange={(e) => { setEmail(e.target.value); setGalat(""); }}
+            onKeyDown={(e) => e.key === "Enter" && kirim()} />
+        </label>
+        <label className="kolom" style={{ textAlign: "left" }}>
+          <span className="kolom-label">Password</span>
+          <input type="password" value={password} placeholder="Password Anda"
+            onChange={(e) => { setPassword(e.target.value); setGalat(""); }}
+            onKeyDown={(e) => e.key === "Enter" && kirim()} />
+        </label>
+        {galat && <p className="masuk-galat">{galat}</p>}
+        <Tombol onClick={kirim}><Ikon I={LogIn} size={15} /> {proses ? "Memproses…" : "Masuk"}</Tombol>
+        <button className="tautan-polos" onClick={lupa}>Lupa password? Kirim tautan reset ke email</button>
+        <p className="masuk-catatan">Kepala Sekolah/admin adalah penilai dengan akses penuh. Guru masuk dengan akun yang dibuatkan admin dan hanya dapat melihat laporan kinerjanya sendiri secara realtime.</p>
+      </div>
+    </div>
+  );
+}
+
+function TanpaPeran({ email }) {
+  return (
+    <div className="masuk-latar">
+      <div className="masuk-kotak">
+        <div className="kepala-logo besar" style={{ margin: "0 auto" }}><Ikon I={AlertTriangle} size={26} /></div>
+        <h1>Akun belum terdaftar</h1>
+        <p className="sub" style={{ lineHeight: 1.6 }}>
+          Akun <strong>{email}</strong> berhasil masuk, tetapi belum memiliki peran di aplikasi ini.
+          Untuk akun admin pertama: buka Firebase Console → Firestore → buat dokumen di koleksi
+          <code> users</code> dengan ID = UID akun ini, berisi field <code>peran: "admin"</code> dan <code>nama</code>.
+          Petunjuk lengkap ada di file PANDUAN.md.
+        </p>
+        <Tombol onClick={() => keluar()}><Ikon I={LogOut} size={15} /> Keluar</Tombol>
+      </div>
+    </div>
+  );
+}
+
+/* ================= TAB AKUN (ADMIN) ================= */
+
+function TabAkun({ data }) {
+  const [users, setUsers] = useState([]);
+  const [formAkun, setFormAkun] = useState(null);
+  const [kelola, setKelola] = useState(null); // {guru, akun} — kelola email/password akun guru tertentu
+  const [pwLama, setPwLama] = useState("");
+  const [pwBaru, setPwBaru] = useState("");
+  const [pwKonfirm, setPwKonfirm] = useState("");
+  const [pesan, setPesan] = useState("");
+  const [proses, setProses] = useState(false);
+
+  useEffect(() => langgananUsers(setUsers), []);
+
+  const akunGuru = (guruId) => users.find((u) => u.peran === "guru" && u.guruId === guruId);
+  const tanpaAkun = urutkanNama(data.guru.filter((g) => !akunGuru(g.id)));
+
+  const buatAkun = async () => {
+    if (!formAkun.guruId || !formAkun.email.trim() || formAkun.password.length < 6) {
+      window.alert("Lengkapi data. Password minimal 6 karakter (ketentuan Firebase)."); return;
+    }
+    const g = data.guru.find((x) => x.id === formAkun.guruId);
+    setProses(true);
+    try {
+      await buatAkunGuru({ email: formAkun.email.trim(), password: formAkun.password, guruId: g.id, nama: g.nama });
+      window.alert("Akun guru berhasil dibuat. Sampaikan email & password awal kepada guru, dan sarankan segera menggantinya lewat menu lupa password.");
+      setFormAkun(null);
+    } catch (e) {
+      window.alert("Gagal membuat akun: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const resetGuru = async (email) => {
+    try { await kirimResetPassword(email); window.alert("Tautan reset password dikirim ke " + email); }
+    catch (e) { window.alert("Gagal mengirim: " + (e?.message || e)); }
+  };
+
+  const gantiPw = async () => {
+    setPesan("");
+    if (pwBaru.length < 6) { setPesan("Password baru minimal 6 karakter."); return; }
+    if (pwBaru !== pwKonfirm) { setPesan("Konfirmasi password tidak sama."); return; }
+    try {
+      await gantiPasswordSendiri(pwLama, pwBaru);
+      setPwLama(""); setPwBaru(""); setPwKonfirm("");
+      setPesan("Password berhasil diubah.");
+    } catch (e) {
+      setPesan(String(e?.code || "").includes("invalid-credential") || String(e?.code || "").includes("wrong-password")
+        ? "Password saat ini salah." : "Gagal mengubah password: " + (e?.message || e));
+    }
+  };
+
+  return (
+    <div className="susun-v">
+      <Kartu>
+        <div className="kartu-kepala"><h2>Password Saya (Admin)</h2><span className="sub">Ganti password akun Anda sendiri</span></div>
+        <div className="grid-2-form" style={{ gridTemplateColumns: "1fr 1fr 1fr", alignItems: "end", gap: 12 }}>
+          <Kolom label="Password saat ini"><input type="password" value={pwLama} onChange={(e) => setPwLama(e.target.value)} /></Kolom>
+          <Kolom label="Password baru (min. 6 karakter)"><input type="password" value={pwBaru} onChange={(e) => setPwBaru(e.target.value)} /></Kolom>
+          <Kolom label="Ulangi password baru"><input type="password" value={pwKonfirm} onChange={(e) => setPwKonfirm(e.target.value)} /></Kolom>
+        </div>
+        <div className="form-aksi" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <span className="teks-kecil" style={{ color: pesan.includes("berhasil") ? "#177a3e" : "#b23a3a" }}>{pesan}</span>
+          <Tombol onClick={gantiPw}><Ikon I={KeyRound} size={15} /> Ubah Password</Tombol>
+        </div>
+      </Kartu>
+
+      <Kartu>
+        <div className="kartu-kepala baris">
+          <div>
+            <h2>Akun Login Guru</h2>
+            <span className="sub">Guru dengan akun dapat masuk dan hanya melihat laporan kinerjanya sendiri (realtime)</span>
+          </div>
+          <Tombol onClick={() => setFormAkun({ guruId: tanpaAkun[0]?.id || "", email: "", password: "" })}>
+            <Ikon I={Plus} size={15} /> Buat Akun Guru
+          </Tombol>
+        </div>
+        <div className="tabel-bungkus"><table>
+          <thead><tr><th>Nama</th><th>NIK/NIP</th><th>Status Akun</th><th>Email Login</th><th></th></tr></thead>
+          <tbody>
+            {urutkanNama(data.guru).map((g) => {
+              const akun = akunGuru(g.id);
+              return (
+                <tr key={g.id}>
+                  <td><strong>{g.nama}</strong></td>
+                  <td className="teks-kecil">{g.nik || "-"}</td>
+                  <td>{akun
+                    ? <Lencana warna="#177a3e"><Ikon I={ShieldCheck} size={12} /> Aktif</Lencana>
+                    : <Lencana warna="#8a948c">Belum ada akun</Lencana>}</td>
+                  <td className="teks-kecil">{akun?.email || "-"}</td>
+                  <td className="aksi">
+                    {akun && (
+                      <>
+                        <Tombol kecil varian="netral" onClick={() => setKelola({ guru: g, akun })}>
+                          <Ikon I={KeyRound} size={13} /> Kelola Akun
+                        </Tombol>{" "}
+                        <Tombol kecil varian="netral" onClick={() => resetGuru(akun.email)}>Kirim Reset Password</Tombol>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table></div>
+      </Kartu>
+
+      {formAkun && (
+        <Modal judul="Buat Akun Login Guru" onTutup={() => setFormAkun(null)}>
+          {tanpaAkun.length === 0 ? (
+            <Kosong pesan="Semua guru sudah memiliki akun." />
+          ) : (
+            <>
+              <div className="form-grid">
+                <Kolom label="Guru" wajib>
+                  <select value={formAkun.guruId} onChange={(e) => setFormAkun({ ...formAkun, guruId: e.target.value })}>
+                    {tanpaAkun.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                  </select>
+                </Kolom>
+                <Kolom label="Email login guru" wajib>
+                  <input type="email" value={formAkun.email} onChange={(e) => setFormAkun({ ...formAkun, email: e.target.value })} placeholder="nama.guru@sekolah.sch.id" />
+                </Kolom>
+                <Kolom label="Password awal (min. 6 karakter)" wajib>
+                  <input type="text" value={formAkun.password} onChange={(e) => setFormAkun({ ...formAkun, password: e.target.value })} placeholder="Akan disampaikan ke guru" />
+                </Kolom>
+              </div>
+              <div className="form-aksi">
+                <Tombol varian="netral" onClick={() => setFormAkun(null)}>Batal</Tombol>
+                <Tombol onClick={buatAkun}>{proses ? "Membuat…" : "Buat Akun"}</Tombol>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {kelola && <ModalKelolaAkun guru={kelola.guru} akun={kelola.akun} onTutup={() => setKelola(null)} />}
+    </div>
+  );
+}
+
+function ModalKelolaAkun({ guru, akun, onTutup }) {
+  const [emailBaru, setEmailBaru] = useState(akun.email || "");
+  const [passwordBaru, setPasswordBaru] = useState("");
+  const [tampilkanPw, setTampilkanPw] = useState(false);
+  const [pesan, setPesan] = useState("");
+  const [proses, setProses] = useState(false);
+
+  const emailBerubah = emailBaru.trim() && emailBaru.trim() !== akun.email;
+  const adaPerubahan = emailBerubah || passwordBaru.length > 0;
+
+  const simpan = async () => {
+    setPesan("");
+    if (!adaPerubahan) { setPesan("Belum ada perubahan untuk disimpan."); return; }
+    if (passwordBaru && passwordBaru.length < 6) { setPesan("Password baru minimal 6 karakter."); return; }
+    if (emailBerubah && !/^\S+@\S+\.\S+$/.test(emailBaru.trim())) { setPesan("Format email tidak valid."); return; }
+    if (!window.confirm(`Terapkan perubahan akun untuk ${guru.nama}? Guru perlu memakai ${emailBerubah ? "email" : ""}${emailBerubah && passwordBaru ? " dan " : ""}${passwordBaru ? "password" : ""} baru saat login berikutnya.`)) return;
+    setProses(true);
+    try {
+      await adminUbahAkunGuru({
+        targetUid: akun.uid, guruId: guru.id,
+        emailBaru: emailBerubah ? emailBaru.trim() : undefined,
+        passwordBaru: passwordBaru || undefined,
+      });
+      window.alert("Akun berhasil diperbarui. Sampaikan perubahan ini kepada guru yang bersangkutan.");
+      onTutup();
+    } catch (e) {
+      setPesan(e?.message || "Gagal memperbarui akun.");
+    } finally { setProses(false); }
+  };
+
+  return (
+    <Modal judul={`Kelola Akun — ${guru.nama}`} onTutup={onTutup}>
+      <p className="teks-kecil" style={{ marginBottom: 14, lineHeight: 1.6, color: "#6b7a6e" }}>
+        Perubahan di sini langsung berlaku pada akun login guru (lewat server, memakai Firebase Admin SDK).
+        Kosongkan kolom yang tidak ingin diubah.
+      </p>
+      <div className="form-grid">
+        <Kolom label="Email login"><input type="email" value={emailBaru} onChange={(e) => setEmailBaru(e.target.value)} /></Kolom>
+        <Kolom label="Password baru (opsional, min. 6 karakter)">
+          <div className="token-baris">
+            <input type={tampilkanPw ? "text" : "password"} value={passwordBaru} onChange={(e) => setPasswordBaru(e.target.value)} placeholder="Kosongkan bila tidak diubah" />
+            <button type="button" className="btn-ikon" title={tampilkanPw ? "Sembunyikan" : "Tampilkan"} onClick={() => setTampilkanPw(!tampilkanPw)}>
+              <Ikon I={tampilkanPw ? EyeOff : Eye} size={15} />
+            </button>
+          </div>
+        </Kolom>
+      </div>
+      <div className="form-aksi" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <span className="teks-kecil" style={{ color: "#b23a3a" }}>{pesan}</span>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Tombol varian="netral" onClick={onTutup}>Batal</Tombol>
+          <Tombol onClick={simpan}>{proses ? "Menyimpan…" : "Simpan Perubahan"}</Tombol>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* ================= TAB PENGATURAN SEKOLAH (ADMIN) ================= */
+
+function TabPengaturan({ data }) {
+  const [nama, setNama] = useState(data.pengaturan.namaSekolah || "");
+  const [taAktif, setTaAktif] = useState(data.pengaturan.ta || "2026/2027");
+  const [taBaru, setTaBaru] = useState("");
+  const [pesan, setPesan] = useState("");
+  const [proses, setProses] = useState(false);
+
+  useEffect(() => { setNama(data.pengaturan.namaSekolah || ""); setTaAktif(data.pengaturan.ta || "2026/2027"); }, [data.pengaturan.namaSekolah, data.pengaturan.ta]);
+
+  const daftarTA = useMemo(() => {
+    const s = new Set([data.pengaturan.ta || "2026/2027"]);
+    [...data.insidental, ...data.catatan, ...(data.supervisi || []), ...(data.administrasi || [])]
+      .forEach((r) => r.tanggal && s.add(tahunAjaranDariTanggal(r.tanggal)));
+    return [...s].sort();
+  }, [data]);
+
+  const simpan = async () => {
+    if (!nama.trim() || !taAktif.trim()) return;
+    setProses(true); setPesan("");
+    try {
+      await simpanPengaturan({ namaSekolah: nama.trim(), ta: taAktif.trim() });
+      setPesan("Pengaturan berhasil disimpan. Filter Tahun Ajaran di header akan mengikuti pada muat berikutnya.");
+    } catch (e) {
+      setPesan("Gagal menyimpan: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const mulaiTAbaru = async () => {
+    const th = taBaru.trim();
+    if (!/^\d{4}\/\d{4}$/.test(th)) { window.alert("Format Tahun Ajaran harus seperti 2027/2028."); return; }
+    if (!window.confirm(`Jadikan ${th} sebagai Tahun Ajaran Aktif? Data tahun-tahun sebelumnya tetap tersimpan dan bisa dilihat lewat filter TA di header.`)) return;
+    setProses(true);
+    try {
+      await simpanPengaturan({ ta: th });
+      setTaAktif(th); setTaBaru("");
+      setPesan(`Tahun Ajaran Aktif diperbarui menjadi ${th}.`);
+    } catch (e) {
+      window.alert("Gagal memperbarui: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  return (
+    <div className="susun-v">
+      <Kartu>
+        <div className="kartu-kepala"><h2>Identitas Sekolah</h2><span className="sub">Ditampilkan di header, layar login, dan kop laporan</span></div>
+        <div className="form-grid">
+          <Kolom label="Nama Sekolah" wajib><input value={nama} onChange={(e) => setNama(e.target.value)} /></Kolom>
+          <Kolom label="Tahun Ajaran Aktif" wajib>
+            <select value={taAktif} onChange={(e) => setTaAktif(e.target.value)}>
+              {daftarTA.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Kolom>
+        </div>
+        <div className="form-aksi" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <span className="teks-kecil" style={{ color: pesan.includes("Gagal") ? "#b23a3a" : "#177a3e" }}>{pesan}</span>
+          <Tombol onClick={simpan}><Ikon I={Save} size={15} /> {proses ? "Menyimpan…" : "Simpan Pengaturan"}</Tombol>
+        </div>
+      </Kartu>
+
+      <Kartu>
+        <div className="kartu-kepala"><h2>Ganti ke Tahun Ajaran Baru</h2><span className="sub">Gunakan saat pergantian tahun ajaran (mis. dari 2026/2027 ke 2027/2028). Data lama tetap tersimpan dan tetap bisa dibuka lewat filter TA di header — ini hanya mengubah tahun yang tampil sebagai default.</span></div>
+        <div className="form-grid" style={{ maxWidth: 360 }}>
+          <Kolom label="Tahun Ajaran Baru (format: 2027/2028)">
+            <input value={taBaru} onChange={(e) => setTaBaru(e.target.value)} placeholder="2027/2028" />
+          </Kolom>
+        </div>
+        <div className="form-aksi">
+          <Tombol varian="netral" onClick={mulaiTAbaru}><Ikon I={CalendarClock} size={15} /> Mulai Tahun Ajaran Ini</Tombol>
+        </div>
+        <p className="teks-redup" style={{ marginTop: 10 }}>
+          Data guru, tugas struktural yang masih berjalan, dan akun login tidak ikut terhapus atau tereset saat berganti tahun ajaran.
+          Tugas struktural yang perlu diperbarui SK-nya bisa ditutup (isi tanggal Selesai) lalu dibuat penugasan baru di tab Tugas Struktural.
+        </p>
+      </Kartu>
+    </div>
+  );
+}
+
+/* ================= AKHLAK MANDIRI (Guru) ================= */
+
+// TA & semester "saat ini" mengikuti Tahun Ajaran Aktif di Pengaturan Sekolah + tanggal hari ini —
+// bukan filter TA di header, supaya guru selalu mengisi untuk periode yang sedang berjalan.
+const semesterSaatIni = () => semesterDariTanggal(new Date().toISOString().slice(0, 10));
+
+function KartuAkhlakSaya({ guru, data }) {
+  const [form, setForm] = useState(null);
+  const [proses, setProses] = useState(false);
+  const taAktif = data.pengaturan.ta || "2026/2027";
+  const semAktif = semesterSaatIni();
+  const existing = data.akhlak.find((r) => r.ta === taAktif && r.semester === semAktif);
+
+  const bukaForm = () => {
+    const awal = { ta: taAktif, semester: semAktif };
+    DIMENSI_AKHLAK.forEach((d) => { awal[d.kunci] = existing?.[d.kunci] || { nilai: null, catatan: "" }; });
+    setForm(awal);
+  };
+
+  const simpan = async () => {
+    if (DIMENSI_AKHLAK.some((d) => !form[d.kunci]?.nilai)) { window.alert("Mohon isi penilaian untuk keempat dimensi akhlak."); return; }
+    setProses(true);
+    try {
+      const isi = {};
+      DIMENSI_AKHLAK.forEach((d) => { isi[d.kunci] = form[d.kunci]; });
+      await ajukanPenilaianAkhlak(guru.id, taAktif, semAktif, isi);
+      kirimNotifikasiAman({
+        tujuan: "admin",
+        judul: "Penilaian Akhlak Mandiri Baru",
+        isi: `${guru.nama} mengisi penilaian akhlak mandiri untuk semester ${semAktif}.`,
+      });
+      setForm(null);
+    } catch (e) {
+      window.alert("Gagal menyimpan: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const terkunci = existing?.status === "Divalidasi";
+
+  return (
+    <>
+      <Kartu className="kartu-akhlak" style={{ marginBottom: 16, borderLeft: `4px solid ${existing ? WARNA_STATUS_AKHLAK[existing.status] : "#8a948c"}` }}>
+        <div className="kartu-kepala baris">
+          <div>
+            <h2><Ikon I={Heart} size={16} style={{ verticalAlign: -3, marginRight: 6 }} />Penilaian Akhlak Mandiri</h2>
+            <span className="sub">Semester {semAktif} · TA {taAktif} — diisi sendiri, sekali per semester</span>
+          </div>
+          {existing
+            ? <Lencana warna={WARNA_STATUS_AKHLAK[existing.status]}>{terkunci && <Ikon I={Lock} size={11} />} {existing.status}</Lencana>
+            : <Lencana warna="#8a948c">Belum diisi</Lencana>}
+        </div>
+
+        {!existing ? (
+          <Kosong pesan="Anda belum mengisi penilaian akhlak mandiri untuk semester ini."
+            aksi={<Tombol kecil onClick={bukaForm}><Ikon I={Plus} size={14} /> Isi Penilaian Sekarang</Tombol>} />
+        ) : (
+          <>
+            <div className="grid-akhlak-ringkas">
+              {DIMENSI_AKHLAK.map((d) => {
+                const v = existing[d.kunci];
+                const info = infoNilaiCatatan(v?.nilai);
+                return (
+                  <div key={d.kunci} className="akhlak-mini" style={{ borderColor: `${info.warna}55`, background: info.latar }}>
+                    <span className="teks-kecil">{d.label}</span>
+                    <strong style={{ color: info.warna }}>{v?.nilai} — {info.label}</strong>
+                  </div>
+                );
+              })}
+            </div>
+            {existing.catatanValidasi && (
+              <p className="teks-kecil" style={{ marginTop: 10 }}><strong>Catatan Kepala Sekolah:</strong> {existing.catatanValidasi}</p>
+            )}
+            <div className="aksi" style={{ marginTop: 10 }}>
+              {!terkunci
+                ? <Tombol kecil varian="netral" onClick={bukaForm}><Ikon I={Pencil} size={13} /> Ubah Penilaian</Tombol>
+                : <span className="teks-kecil" style={{ color: "#6b7a6e" }}><Ikon I={Lock} size={12} /> Sudah divalidasi, tidak bisa diubah lagi.</span>}
+            </div>
+          </>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul="Penilaian Akhlak Mandiri" onTutup={() => setForm(null)} lebar={640}>
+          <p className="teks-kecil" style={{ marginBottom: 14, lineHeight: 1.6 }}>
+            Penilaian ini bersifat refleksi diri yang jujur — bukan alat pemeringkatan. Nilai berdasarkan perilaku yang benar-benar teramati,
+            bukan yang ideal. Kepala Sekolah akan memvalidasi, bukan menilai ulang.
+          </p>
+          <div className="form-grid">
+            {DIMENSI_AKHLAK.map((d) => (
+              <div key={d.kunci} className="blok-akhlak-form">
+                <Kolom label={d.label} wajib>
+                  <p className="teks-kecil" style={{ margin: "0 0 8px", color: "#6b7a6e" }}>{d.deskripsi}</p>
+                  <PemilihSkala5 nilai={form[d.kunci]?.nilai} onUbah={(n) => setForm({ ...form, [d.kunci]: { ...form[d.kunci], nilai: n } })} keterangan={KETERANGAN_NILAI_CATATAN} />
+                </Kolom>
+                <Kolom label="Catatan reflektif (opsional)">
+                  <textarea rows={2} value={form[d.kunci]?.catatan || ""} onChange={(e) => setForm({ ...form, [d.kunci]: { ...form[d.kunci], catatan: e.target.value } })} placeholder="Contoh peristiwa atau kebiasaan yang mendasari penilaian ini…" />
+                </Kolom>
+              </div>
+            ))}
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>{proses ? "Menyimpan…" : "Ajukan untuk Divalidasi"}</Tombol>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/* ================= VALIDASI AKHLAK (Admin) ================= */
+
+function TabValidasiAkhlak({ data, ta, sem }) {
+  const [lihat, setLihat] = useState(null);
+  const [fStatus, setFStatus] = useState("Semua");
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = data.akhlak
+    .filter((r) => ta === "Semua" || r.ta === ta)
+    .filter((r) => sem === "Semua" || r.semester === sem)
+    .filter((r) => fStatus === "Semua" || r.status === fStatus)
+    .sort((a, b) => (b.diperbaruiPada || "").localeCompare(a.diperbaruiPada || ""));
+
+  const menunggu = data.akhlak.filter((r) => r.status === "Menunggu Validasi").length;
+
+  const validasi = async (r, catatan) => {
+    try {
+      await validasiPenilaianAkhlak(r.id, catatan);
+      kirimNotifikasiAman({
+        tujuan: "guru", guruId: r.guruId,
+        judul: "Penilaian Akhlak Divalidasi",
+        isi: `Penilaian akhlak mandiri Anda untuk semester ${r.semester} telah divalidasi Kepala Sekolah.`,
+      });
+      setLihat(null);
+    }
+    catch (e) { window.alert("Gagal memvalidasi: " + (e?.message || e)); }
+  };
+  const bukaKembali = async (r) => {
+    if (!window.confirm("Buka kembali penilaian ini agar guru bisa merevisi?")) return;
+    try { await bukaKembaliPenilaianAkhlak(r.id); setLihat(null); }
+    catch (e) { window.alert("Gagal: " + (e?.message || e)); }
+  };
+
+  return (
+    <div className="susun-v">
+      <p className="keterangan">
+        Penilaian akhlak diisi mandiri oleh guru satu kali per semester. Peran Kepala Sekolah di sini adalah <strong>memvalidasi</strong> —
+        menandai sudah diterima dan ditinjau — bukan menilai ulang angkanya. Data ini bersifat reflektif-kualitatif dan tidak dihitung ke Skor Total.
+      </p>
+
+      <div className="baris-alat">
+        <div className="pilih-bungkus">
+          <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+            <option value="Semua">Semua status</option>
+            <option value="Menunggu Validasi">Menunggu Validasi</option>
+            <option value="Divalidasi">Divalidasi</option>
+          </select>
+          <Ikon I={ChevronDown} size={14} />
+        </div>
+        {menunggu > 0 && <Lencana warna="#c2912e"><Ikon I={AlertTriangle} size={12} /> {menunggu} menunggu validasi</Lencana>}
+      </div>
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada penilaian akhlak mandiri pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Guru</th><th>TA · Semester</th><th>Rata-rata</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => {
+                const rata4 = DIMENSI_AKHLAK.reduce((a, d) => a + (Number(r[d.kunci]?.nilai) || 0), 0) / 4;
+                const info = infoNilaiCatatan(Math.round(rata4));
+                return (
+                  <tr key={r.id}>
+                    <td><strong>{namaGuru(r.guruId)}</strong></td>
+                    <td className="teks-kecil">{r.ta} · {r.semester}</td>
+                    <td><span style={{ color: warnaRataSkala5(rata4), fontWeight: 700 }}>{rata4.toFixed(1)}</span> <span className="teks-kecil">({info.label})</span></td>
+                    <td><Lencana warna={WARNA_STATUS_AKHLAK[r.status]}>{r.status === "Divalidasi" && <Ikon I={Lock} size={11} />} {r.status}</Lencana></td>
+                    <td className="aksi"><Tombol kecil varian="netral" onClick={() => setLihat(r)}>Lihat Detail</Tombol></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {lihat && (
+        <Modal judul={`Penilaian Akhlak — ${namaGuru(lihat.guruId)}`} onTutup={() => setLihat(null)} lebar={620}>
+          <p className="teks-kecil" style={{ marginBottom: 10 }}>{lihat.ta} · Semester {lihat.semester}</p>
+          <div className="susun-v">
+            {DIMENSI_AKHLAK.map((d) => {
+              const v = lihat[d.kunci];
+              const info = infoNilaiCatatan(v?.nilai);
+              return (
+                <div key={d.kunci} className="akhlak-detail-baris" style={{ borderLeft: `3px solid ${info.warna}` }}>
+                  <div className="baris" style={{ justifyContent: "space-between" }}>
+                    <strong>{d.label}</strong>
+                    <Lencana warna={info.warna}>{v?.nilai} — {info.label}</Lencana>
+                  </div>
+                  {v?.catatan && <p className="teks-kecil" style={{ marginTop: 4 }}>{v.catatan}</p>}
+                </div>
+              );
+            })}
+          </div>
+
+          {lihat.status === "Menunggu Validasi" ? (
+            <FormValidasi onValidasi={(catatan) => validasi(lihat, catatan)} onBatal={() => setLihat(null)} />
+          ) : (
+            <>
+              {lihat.catatanValidasi && <p className="teks-kecil" style={{ marginTop: 14 }}><strong>Catatan validasi:</strong> {lihat.catatanValidasi}</p>}
+              <div className="form-aksi" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <button className="tautan-polos" onClick={() => bukaKembali(lihat)}><Ikon I={Undo2} size={13} /> Buka kembali untuk revisi</button>
+                <Tombol varian="netral" onClick={() => setLihat(null)}>Tutup</Tombol>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function FormValidasi({ onValidasi, onBatal }) {
+  const [catatan, setCatatan] = useState("");
+  return (
+    <>
+      <Kolom label="Catatan validasi (opsional)">
+        <textarea rows={2} value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Apresiasi atau arahan singkat, jika ada…" />
+      </Kolom>
+      <div className="form-aksi">
+        <Tombol varian="netral" onClick={onBatal}>Tutup</Tombol>
+        <Tombol onClick={() => onValidasi(catatan)}><Ikon I={ShieldCheck} size={15} /> Tandai Divalidasi</Tombol>
+      </div>
+    </>
+  );
+}
+
+/* ================= SURAT TUGAS (Guru) ================= */
+
+function KartuSuratTugasSaya({ guru, data }) {
+  const [form, setForm] = useState(null);
+  const [proses, setProses] = useState(false);
+  const daftar = (data.suratTugas || []).filter((r) => r.guruId === guru.id)
+    .sort((a, b) => (b.diajukanPada || "").localeCompare(a.diajukanPada || ""));
+
+  const kosong = { namaAgenda: "", peran: "", tanggalMulai: new Date().toISOString().slice(0, 10), tanggalSelesai: "", lokasi: "", kategori: KATEGORI_INSIDENTAL[0], deskripsi: "", perkiraanJam: "" };
+
+  const simpan = async () => {
+    if (!form.namaAgenda.trim() || !form.peran.trim() || !form.tanggalMulai || !form.lokasi.trim() || !form.deskripsi.trim()) {
+      window.alert("Mohon lengkapi Nama Agenda, Peran, Tanggal Mulai, Lokasi, dan Deskripsi."); return;
+    }
+    if (form.tanggalSelesai && form.tanggalSelesai < form.tanggalMulai) {
+      window.alert("Tanggal selesai tidak boleh sebelum tanggal mulai."); return;
+    }
+    setProses(true);
+    try {
+      const isi = { ...form, tanggalSelesai: form.tanggalSelesai || form.tanggalMulai };
+      if (form.id) await perbaruiSuratTugas(form.id, isi);
+      else {
+        await ajukanSuratTugas(guru.id, isi);
+        kirimNotifikasiAman({
+          tujuan: "admin",
+          judul: "Pengajuan Surat Tugas Baru",
+          isi: `${guru.nama} mengajukan surat tugas: ${form.namaAgenda}`,
+        });
+      }
+      setForm(null);
+    } catch (e) {
+      window.alert("Gagal menyimpan: " + (e?.message || e));
+    } finally { setProses(false); }
+  };
+
+  const batalkan = async (r) => {
+    if (!window.confirm("Batalkan pengajuan surat tugas ini?")) return;
+    try { await batalkanSuratTugas(r.id); } catch (e) { window.alert("Gagal membatalkan: " + (e?.message || e)); }
+  };
+
+  return (
+    <>
+      <Kartu style={{ marginBottom: 16 }}>
+        <div className="kartu-kepala baris">
+          <div>
+            <h2><Ikon I={FileText} size={16} style={{ verticalAlign: -3, marginRight: 6 }} />Pengajuan Surat Tugas</h2>
+            <span className="sub">Ajukan untuk kegiatan seperti seminar, workshop, atau kegiatan luar lainnya</span>
+          </div>
+          <Tombol kecil onClick={() => setForm({ ...kosong })}><Ikon I={Plus} size={14} /> Ajukan Surat Tugas</Tombol>
+        </div>
+
+        {daftar.length === 0 ? (
+          <Kosong pesan="Belum ada pengajuan surat tugas." />
+        ) : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Agenda</th><th>Tanggal</th><th>Lokasi</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td><strong>{r.namaAgenda}</strong><div className="teks-kecil">{r.peran}</div></td>
+                  <td className="teks-kecil nowrap">{fmtTgl(r.tanggalMulai)}{r.tanggalSelesai && r.tanggalSelesai !== r.tanggalMulai ? ` – ${fmtTgl(r.tanggalSelesai)}` : ""}</td>
+                  <td className="teks-kecil"><Ikon I={MapPin} size={11} style={{ verticalAlign: -2 }} /> {r.lokasi}</td>
+                  <td><Lencana warna={WARNA_STATUS_SURAT[r.status]}>{r.status}</Lencana>{r.catatanAdmin && r.status === "Ditolak" && <div className="teks-kecil" style={{ marginTop: 3 }}>{r.catatanAdmin}</div>}</td>
+                  <td className="aksi">
+                    {r.status === "Menunggu Persetujuan" && (
+                      <>
+                        <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...kosong, ...r })}><Ikon I={Pencil} size={14} /></button>
+                        <button className="btn-ikon bahaya" title="Batalkan" onClick={() => batalkan(r)}><Ikon I={Trash2} size={14} /></button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Pengajuan Surat Tugas" : "Ajukan Surat Tugas"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <Kolom label="Nama Agenda" wajib>
+              <input value={form.namaAgenda} onChange={(e) => setForm({ ...form, namaAgenda: e.target.value })} placeholder="mis. Workshop Kurikulum Merdeka" />
+            </Kolom>
+            <Kolom label="Peran Sebagai" wajib>
+              <input value={form.peran} onChange={(e) => setForm({ ...form, peran: e.target.value })} placeholder="mis. Peserta, Narasumber, Pendamping" />
+            </Kolom>
+            <div className="grid-2-form">
+              <Kolom label="Tanggal Mulai" wajib><input type="date" value={form.tanggalMulai} onChange={(e) => setForm({ ...form, tanggalMulai: e.target.value })} /></Kolom>
+              <Kolom label="Tanggal Selesai"><input type="date" value={form.tanggalSelesai} onChange={(e) => setForm({ ...form, tanggalSelesai: e.target.value })} placeholder="Sama dengan tanggal mulai bila kosong" /></Kolom>
+            </div>
+            <Kolom label="Lokasi" wajib>
+              <input value={form.lokasi} onChange={(e) => setForm({ ...form, lokasi: e.target.value })} placeholder="mis. Aula Sekolah, Malang, dsb." />
+            </Kolom>
+            <Kolom label="Kategori Kegiatan">
+              <select value={form.kategori} onChange={(e) => setForm({ ...form, kategori: e.target.value })}>
+                {KATEGORI_INSIDENTAL.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Deskripsi Kegiatan" wajib>
+              <textarea rows={3} value={form.deskripsi} onChange={(e) => setForm({ ...form, deskripsi: e.target.value })} placeholder="Jelaskan singkat kegiatannya — seminar, workshop, outbound, dsb." />
+            </Kolom>
+            <Kolom label="Perkiraan Total Jam Kegiatan (opsional)">
+              <input type="number" min="0" value={form.perkiraanJam} onChange={(e) => setForm({ ...form, perkiraanJam: e.target.value })} placeholder="Membantu Kepala Sekolah saat menyetujui" />
+            </Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>{proses ? "Menyimpan…" : "Ajukan"}</Tombol>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+/* ================= PERSETUJUAN SURAT TUGAS (Admin) ================= */
+
+function TabPersetujuanSuratTugas({ data, ta, sem }) {
+  const [proses, setProses] = useState(null); // {tipe:'setuju'|'tolak', r}
+  const [fStatus, setFStatus] = useState("Menunggu Persetujuan");
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = (data.suratTugas || [])
+    .filter((r) => cocokFilter(r.tanggalMulai, ta, sem) || ta === "Semua")
+    .filter((r) => fStatus === "Semua" || r.status === fStatus)
+    .sort((a, b) => (b.diajukanPada || "").localeCompare(a.diajukanPada || ""));
+
+  const menunggu = (data.suratTugas || []).filter((r) => r.status === "Menunggu Persetujuan").length;
+
+  return (
+    <div className="susun-v">
+      <p className="keterangan">
+        Pengajuan surat tugas dari guru/tenaga kependidikan. Menyetujui akan <strong>otomatis membuat Tugas Insidental baru</strong>
+        (belum dinilai) di tab Tugas Insidental — tinggal Anda beri penilaian seperti biasa.
+      </p>
+
+      <div className="baris-alat">
+        <div className="pilih-bungkus">
+          <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+            <option value="Semua">Semua status</option>
+            <option value="Menunggu Persetujuan">Menunggu Persetujuan</option>
+            <option value="Disetujui">Disetujui</option>
+            <option value="Ditolak">Ditolak</option>
+          </select>
+          <Ikon I={ChevronDown} size={14} />
+        </div>
+        {menunggu > 0 && <Lencana warna="#c2912e"><Ikon I={AlertTriangle} size={12} /> {menunggu} menunggu persetujuan</Lencana>}
+      </div>
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada pengajuan surat tugas pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Pegawai</th><th>Agenda</th><th>Peran</th><th>Tanggal</th><th>Lokasi</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td><strong>{namaGuru(r.guruId)}</strong></td>
+                  <td>{r.namaAgenda}<div className="teks-kecil">{r.kategori}</div></td>
+                  <td className="teks-kecil">{r.peran}</td>
+                  <td className="teks-kecil nowrap">{fmtTgl(r.tanggalMulai)}{r.tanggalSelesai && r.tanggalSelesai !== r.tanggalMulai ? ` – ${fmtTgl(r.tanggalSelesai)}` : ""}</td>
+                  <td className="teks-kecil">{r.lokasi}</td>
+                  <td><Lencana warna={WARNA_STATUS_SURAT[r.status]}>{r.status}</Lencana></td>
+                  <td className="aksi">
+                    {r.status === "Menunggu Persetujuan" && (
+                      <Tombol kecil onClick={() => setProses({ r })}>Tinjau</Tombol>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {proses && <ModalTinjauSurat pengajuan={proses.r} namaGuru={namaGuru(proses.r.guruId)} onTutup={() => setProses(null)} />}
+    </div>
+  );
+}
+
+function ModalTinjauSurat({ pengajuan, namaGuru, onTutup }) {
+  const [kategori, setKategori] = useState(pengajuan.kategori || KATEGORI_INSIDENTAL[0]);
+  const [jam, setJam] = useState(pengajuan.perkiraanJam || Math.min(40, jumlahHariSurat(pengajuan.tanggalMulai, pengajuan.tanggalSelesai) * 8));
+  const [alasanTolak, setAlasanTolak] = useState("");
+  const [modeTolak, setModeTolak] = useState(false);
+  const [proses, setProses] = useState(false);
+
+  const setujui = async () => {
+    if (!jam || Number(jam) <= 0) { window.alert("Isi perkiraan jam kegiatan (lebih dari 0)."); return; }
+    setProses(true);
+    try {
+      await setujuiSuratTugas(pengajuan, { kategori, jam });
+      kirimNotifikasiAman({
+        tujuan: "guru", guruId: pengajuan.guruId,
+        judul: "Surat Tugas Disetujui",
+        isi: `Pengajuan "${pengajuan.namaAgenda}" telah disetujui dan masuk sebagai Tugas Insidental.`,
+      });
+      window.alert("Disetujui. Satu Tugas Insidental baru telah dibuat dan siap dinilai di tab Tugas Insidental.");
+      onTutup();
+    } catch (e) { window.alert("Gagal menyetujui: " + (e?.message || e)); }
+    finally { setProses(false); }
+  };
+
+  const tolak = async () => {
+    setProses(true);
+    try {
+      await tolakSuratTugas(pengajuan.id, alasanTolak);
+      kirimNotifikasiAman({
+        tujuan: "guru", guruId: pengajuan.guruId,
+        judul: "Surat Tugas Ditolak",
+        isi: `Pengajuan "${pengajuan.namaAgenda}" ditolak.${alasanTolak ? " Alasan: " + alasanTolak : ""}`,
+      });
+      onTutup();
+    }
+    catch (e) { window.alert("Gagal menolak: " + (e?.message || e)); }
+    finally { setProses(false); }
+  };
+
+  return (
+    <Modal judul={`Tinjau Surat Tugas — ${namaGuru}`} onTutup={onTutup} lebar={560}>
+      <div className="susun-v" style={{ gap: 6, marginBottom: 14 }}>
+        <div className="akhlak-detail-baris" style={{ borderLeft: "3px solid var(--hijau)" }}>
+          <strong>{pengajuan.namaAgenda}</strong>
+          <p className="teks-kecil" style={{ margin: "4px 0 0" }}>
+            Peran: {pengajuan.peran} · {fmtTgl(pengajuan.tanggalMulai)}{pengajuan.tanggalSelesai && pengajuan.tanggalSelesai !== pengajuan.tanggalMulai ? ` – ${fmtTgl(pengajuan.tanggalSelesai)}` : ""} · <Ikon I={MapPin} size={11} style={{ verticalAlign: -2 }} /> {pengajuan.lokasi}
+          </p>
+          <p className="teks-kecil" style={{ margin: "6px 0 0" }}>{pengajuan.deskripsi}</p>
+        </div>
+      </div>
+
+      {!modeTolak ? (
+        <>
+          <div className="form-grid">
+            <Kolom label="Kategori Tugas Insidental">
+              <select value={kategori} onChange={(e) => setKategori(e.target.value)}>
+                {KATEGORI_INSIDENTAL.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Jam (beban kerja untuk Tugas Insidental)" wajib>
+              <input type="number" min="1" value={jam} onChange={(e) => setJam(e.target.value)} />
+            </Kolom>
+          </div>
+          <p className="teks-kecil" style={{ color: "#6b7a6e" }}>
+            Menyetujui akan membuat satu Tugas Insidental baru (belum dinilai) — Anda beri penilaiannya nanti di tab Tugas Insidental.
+          </p>
+          <div className="form-aksi" style={{ justifyContent: "space-between" }}>
+            <button className="tautan-polos" style={{ color: "#b23a3a" }} onClick={() => setModeTolak(true)}><Ikon I={XCircle} size={14} /> Tolak Pengajuan</button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <Tombol varian="netral" onClick={onTutup}>Tutup</Tombol>
+              <Tombol onClick={setujui}><Ikon I={CheckCircle2} size={15} /> {proses ? "Memproses…" : "Setujui"}</Tombol>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <Kolom label="Alasan penolakan (opsional, akan terlihat oleh guru)">
+            <textarea rows={2} value={alasanTolak} onChange={(e) => setAlasanTolak(e.target.value)} />
+          </Kolom>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setModeTolak(false)}>Kembali</Tombol>
+            <Tombol onClick={tolak}>{proses ? "Memproses…" : "Konfirmasi Tolak"}</Tombol>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+/* ================= DASBOR ================= */
+
+function Dasbor({ data, ta, sem, kePindah }) {
+  const profil = data.guru.map((g) => hitungProfil(g.id, data, ta, sem));
+  const banding = profil
+    .map((p) => ({ nama: p.g.nama.replace(/,.*$/, ""), skor: p.skorTotal }))
+    .sort((a, b) => b.skor - a.skor);
+  const totIns = data.insidental.filter((r) => cocokFilter(r.tanggal, ta, sem));
+  const totCat = data.catatan.filter((r) => cocokFilter(r.tanggal, ta, sem));
+  const totJam = totIns.reduce((a, b) => a + (Number(b.jam) || 0), 0);
+
+  const belumDinilai = data.struktural.filter((r) => !Number(r.nilai)).length +
+    totIns.filter((r) => !Number(r.nilai)).length;
+  const akhlakMenunggu = (data.akhlak || []).filter((r) => r.status === "Menunggu Validasi").length;
+  const suratMenunggu = (data.suratTugas || []).filter((r) => r.status === "Menunggu Persetujuan").length;
+
+  const statistik = [
+    { label: "Guru terdaftar", nilai: data.guru.length, I: Users },
+    { label: "Tugas struktural aktif", nilai: data.struktural.length, I: Briefcase },
+    { label: "Tugas insidental (periode ini)", nilai: totIns.length, I: CalendarClock },
+    { label: "Total jam tugas tambahan", nilai: totJam, I: Clock },
+    { label: "Tugas belum dinilai", nilai: belumDinilai, I: AlertTriangle, sorot: belumDinilai > 0 },
+    { label: "Akhlak menunggu validasi", nilai: akhlakMenunggu, I: Heart, sorot: akhlakMenunggu > 0, aksi: () => kePindah("akhlak") },
+    { label: "Surat tugas menunggu persetujuan", nilai: suratMenunggu, I: FileText, sorot: suratMenunggu > 0, aksi: () => kePindah("suratTugas") },
+  ];
+
+  const terbaru = [...totIns.map((r) => ({ ...r, tipe: "insidental" })), ...totCat.map((r) => ({ ...r, tipe: "catatan" }))]
+    .sort((a, b) => b.tanggal.localeCompare(a.tanggal)).slice(0, 6);
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  return (
+    <div className="susun-v">
+      <div className="grid-stat">
+        {statistik.map((s) => (
+          <Kartu key={s.label} className="stat" onClick={s.aksi}
+            style={{ ...(s.sorot ? { borderColor: "#c2912e", background: "#fdf8ee" } : {}), ...(s.aksi ? { cursor: "pointer" } : {}) }}>
+            <div className="stat-ikon" style={s.sorot ? { background: "#f5e8cc", color: "#a3761f" } : undefined}><Ikon I={s.I} size={18} /></div>
+            <div><div className="stat-angka">{s.nilai}</div><div className="stat-label">{s.label}</div></div>
+          </Kartu>
+        ))}
+      </div>
+
+      <div className="grid-2">
+        <Kartu>
+          <div className="kartu-kepala">
+            <h2>Perbandingan Kontribusi Antarguru</h2>
+            <span className="sub">Skor 0–100: fungsional (bobot tertinggi) + struktural + insidental + catatan kinerja — rata-rata × bobot, bukan jumlah</span>
+          </div>
+          {banding.length === 0 ? <Kosong pesan="Belum ada data guru." /> : (
+            <ResponsiveContainer width="100%" height={Math.max(200, banding.length * 52)}>
+              <BarChart data={banding} layout="vertical" margin={{ left: 8, right: 40, top: 4, bottom: 4 }}>
+                <CartesianGrid horizontal={false} stroke="#e4e8e2" />
+                <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 12 }} />
+                <YAxis type="category" dataKey="nama" width={150} tick={{ fontSize: 12 }} />
+                <Tooltip formatter={(v) => [v, "Skor"]} />
+                <Bar dataKey="skor" fill="#1a5632" radius={[0, 4, 4, 0]} barSize={22}>
+                  <LabelList dataKey="skor" position="right" style={{ fontSize: 12, fill: "#1a5632", fontWeight: 700 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Kartu>
+
+        <Kartu>
+          <div className="kartu-kepala"><h2>Aktivitas Terbaru</h2><span className="sub">Periode terpilih</span></div>
+          {terbaru.length === 0 ? (
+            <Kosong pesan="Belum ada aktivitas pada periode ini."
+              aksi={<Tombol kecil onClick={() => kePindah("insidental")}><Ikon I={Plus} size={14} /> Catat tugas insidental</Tombol>} />
+          ) : (
+            <ul className="linimasa">
+              {terbaru.map((r) => (
+                <li key={r.id}>
+                  <span className="linimasa-tgl">{fmtTgl(r.tanggal)}</span>
+                  <div>
+                    <strong>{namaGuru(r.guruId)}</strong>
+                    {r.tipe === "insidental"
+                      ? <p>{r.kegiatan} — {r.peran} <Lencana warna={KAT_WARNA[r.kategori]}>{r.kategori}</Lencana></p>
+                      : <p>{r.deskripsi} <Lencana warna={CAT_WARNA[r.jenis]}>{r.jenis}</Lencana></p>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Kartu>
+      </div>
+    </div>
+  );
+}
+
+/* ================= TAB GURU ================= */
+
+function TabGuru({ data }) {
+  const [form, setForm] = useState(null);
+  const [cari, setCari] = useState("");
+
+  const daftar = urutkanNama(data.guru.filter((g) =>
+    [g.nama, g.mapel, g.nik].join(" ").toLowerCase().includes(cari.toLowerCase())));
+
+  const simpan = () => {
+    if (!form.nama.trim()) return;
+    if (form.kategori === "Guru" && !form.mapel.trim()) return;
+    if (form.id) aman(perbaruiDok(KOLEKSI.guru, form.id, form));
+    else aman(tambahDok(KOLEKSI.guru, form));
+    setForm(null);
+  };
+
+  const hapus = (id) => {
+    if (!window.confirm("Hapus pegawai ini beserta seluruh tugas, catatan, dan peran akunnya? Akun login di Firebase Authentication perlu dinonaktifkan terpisah dari Console.")) return;
+    aman(hapusGuruMenyeluruh(id));
+  };
+
+  const KAT_WARNA_PEG = { "Guru": "#1a5632", "Tenaga Kependidikan": "#4f7fae", "Tenaga Administrasi": "#8a5a9e" };
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat">
+        <div className="cari"><Ikon I={Search} size={15} /><input placeholder="Cari nama, mapel/jabatan, atau NIK…" value={cari} onChange={(e) => setCari(e.target.value)} /></div>
+        <Tombol onClick={() => setForm({ nama: "", nik: "", mapel: "", jam: 24, status: STATUS_PEG[0], kategori: "Guru" })}><Ikon I={Plus} size={15} /> Tambah Pegawai</Tombol>
+      </div>
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Tidak ada pegawai yang cocok." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Nama</th><th>NIK/NIP</th><th>Kategori</th><th>Mapel/Jabatan</th><th className="ka">Jam/Minggu</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((g) => (
+                <tr key={g.id}>
+                  <td><strong>{g.nama}</strong></td>
+                  <td>{g.nik || "-"}</td>
+                  <td><Lencana warna={KAT_WARNA_PEG[g.kategori || "Guru"]}>{g.kategori || "Guru"}</Lencana></td>
+                  <td>{g.mapel || "-"}</td>
+                  <td className="ka">{g.jam || "-"}</td>
+                  <td><span className="teks-kecil">{g.status}</span></td>
+                  <td className="aksi">
+                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ kategori: "Guru", ...g })}><Ikon I={Pencil} size={15} /></button>
+                    <button className="btn-ikon bahaya" title="Hapus" onClick={() => hapus(g.id)}><Ikon I={Trash2} size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Data Pegawai" : "Tambah Pegawai"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <Kolom label="Kategori Pegawai" wajib>
+              <select value={form.kategori || "Guru"} onChange={(e) => setForm({ ...form, kategori: e.target.value })}>
+                {KATEGORI_PEGAWAI.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Nama lengkap & gelar" wajib><input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} placeholder="Ust. …, S.Pd." /></Kolom>
+            <Kolom label="NIK / NIP"><input value={form.nik} onChange={(e) => setForm({ ...form, nik: e.target.value })} /></Kolom>
+            <Kolom label={form.kategori === "Guru" ? "Mata pelajaran" : "Jabatan/Bidang Tugas"} wajib={form.kategori === "Guru"}>
+              <input value={form.mapel} onChange={(e) => setForm({ ...form, mapel: e.target.value })} placeholder={form.kategori === "Guru" ? "" : "mis. Tata Usaha, Bendahara, Pustakawan"} />
+            </Kolom>
+            <Kolom label="Beban kerja (jam/minggu)"><input type="number" min="0" max="40" value={form.jam} onChange={(e) => setForm({ ...form, jam: Number(e.target.value) })} /></Kolom>
+            <Kolom label="Status kepegawaian">
+              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{STATUS_PEG.map((s) => <option key={s}>{s}</option>)}</select>
+            </Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAB STRUKTURAL ================= */
+
+function TabStruktural({ data }) {
+  const [form, setForm] = useState(null);
+
+  const tumpangTindih = (f) => data.struktural.some((r) =>
+    r.id !== f.id && r.guruId === f.guruId && r.jabatan.trim().toLowerCase() === f.jabatan.trim().toLowerCase() &&
+    !(f.selesai < r.mulai || f.mulai > r.selesai));
+
+  const simpan = () => {
+    if (!form.guruId || !form.jabatan.trim() || !form.mulai || !form.selesai) return;
+    if (form.mulai > form.selesai) { window.alert("Tanggal mulai harus sebelum tanggal selesai."); return; }
+    if (tumpangTindih(form)) { window.alert("Guru ini sudah memiliki jabatan yang sama pada periode yang tumpang tindih."); return; }
+    if (form.id) aman(perbaruiDok(KOLEKSI.struktural, form.id, form));
+    else aman(tambahDok(KOLEKSI.struktural, form));
+    setForm(null);
+  };
+
+  const perGuru = urutkanNama(data.guru).map((g) => ({ g, tugas: data.struktural.filter((r) => r.guruId === g.id) }));
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat">
+        <p className="keterangan">Jabatan struktural berdasarkan SK Kepala Sekolah — Waka, koordinator, wali kelas, wali asrama, pembina, dan sejenisnya.</p>
+        <Tombol onClick={() => setForm({ guruId: data.guru[0]?.id || "", jabatan: "", sk: "", mulai: "2026-07-01", selesai: "2027-06-30", tupoksi: "", nilai: null })}>
+          <Ikon I={Plus} size={15} /> Tambah Penugasan
+        </Tombol>
+      </div>
+
+      {perGuru.map(({ g, tugas }) => (
+        <Kartu key={g.id}>
+          <div className="kartu-kepala baris">
+            <h2>{g.nama}</h2>
+            <span className="sub">{tugas.length} jabatan</span>
+          </div>
+          {tugas.length === 0 ? <p className="teks-redup">Belum ada tugas struktural.</p> : (
+            <div className="tabel-bungkus"><table>
+              <thead><tr><th>Jabatan</th><th>SK Penugasan</th><th>Periode</th><th>Tupoksi Ringkas</th><th>Penilaian KS</th><th></th></tr></thead>
+              <tbody>
+                {tugas.map((r) => (
+                  <tr key={r.id}>
+                    <td><strong>{r.jabatan}</strong></td>
+                    <td className="teks-kecil">{r.sk || "-"}</td>
+                    <td className="teks-kecil">{fmtTgl(r.mulai)} – {fmtTgl(r.selesai)}</td>
+                    <td className="teks-kecil">{r.tupoksi || "-"}</td>
+                    <td><NilaiPilih nilai={r.nilai} onUbah={(v) => aman(perbaruiDok(KOLEKSI.struktural, r.id, { nilai: v }))} /></td>
+                    <td className="aksi">
+                      <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
+                      <button className="btn-ikon bahaya" title="Hapus" onClick={() => window.confirm("Hapus penugasan ini?") && aman(hapusDok(KOLEKSI.struktural, r.id))}><Ikon I={Trash2} size={15} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          )}
+        </Kartu>
+      ))}
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Penugasan Struktural" : "Tambah Penugasan Struktural"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <Kolom label="Guru" wajib>
+              <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
+                {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Nama jabatan" wajib><input value={form.jabatan} onChange={(e) => setForm({ ...form, jabatan: e.target.value })} placeholder="Waka Kesiswaan, Wali Kelas 7B, …" /></Kolom>
+            <Kolom label="SK penugasan (nomor & tanggal)"><input value={form.sk} onChange={(e) => setForm({ ...form, sk: e.target.value })} placeholder="SK/…/KS/VII/2026 — 1 Jul 2026" /></Kolom>
+            <div className="grid-2-form">
+              <Kolom label="Mulai" wajib><input type="date" value={form.mulai} onChange={(e) => setForm({ ...form, mulai: e.target.value })} /></Kolom>
+              <Kolom label="Selesai" wajib><input type="date" value={form.selesai} onChange={(e) => setForm({ ...form, selesai: e.target.value })} /></Kolom>
+            </div>
+            <Kolom label="Tupoksi ringkas"><textarea rows={2} value={form.tupoksi} onChange={(e) => setForm({ ...form, tupoksi: e.target.value })} /></Kolom>
+            <Kolom label="Penilaian Kepala Sekolah">
+              <NilaiPilih nilai={form.nilai} onUbah={(v) => setForm({ ...form, nilai: v })} />
+            </Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAB INSIDENTAL ================= */
+
+function TabInsidental({ data, ta, sem }) {
+  const [form, setForm] = useState(null);
+  const [fGuru, setFGuru] = useState("Semua");
+  const [fKat, setFKat] = useState("Semua");
+  const [cari, setCari] = useState("");
+
+  const daftar = data.insidental
+    .filter((r) => cocokFilter(r.tanggal, ta, sem))
+    .filter((r) => fGuru === "Semua" || r.guruId === fGuru)
+    .filter((r) => fKat === "Semua" || r.kategori === fKat)
+    .filter((r) => [r.kegiatan, r.peran, r.catatan].join(" ").toLowerCase().includes(cari.toLowerCase()))
+    .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const simpan = () => {
+    if (!form.guruId || !form.tanggal || !form.kegiatan.trim()) return;
+    const dobel = data.insidental.some((r) => r.id !== form.id && r.guruId === form.guruId &&
+      r.tanggal === form.tanggal && r.kegiatan.trim().toLowerCase() === form.kegiatan.trim().toLowerCase());
+    if (dobel) { window.alert("Tugas yang sama untuk guru ini pada tanggal tersebut sudah tercatat."); return; }
+    if (form.id) aman(perbaruiDok(KOLEKSI.insidental, form.id, form));
+    else aman(tambahDok(KOLEKSI.insidental, form));
+    setForm(null);
+  };
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat bungkus">
+        <div className="cari"><Ikon I={Search} size={15} /><input placeholder="Cari kegiatan atau peran…" value={cari} onChange={(e) => setCari(e.target.value)} /></div>
+        <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
+          <option value="Semua">Semua guru</option>
+          {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+        </select><Ikon I={ChevronDown} size={14} /></div>
+        <div className="pilih-bungkus"><select value={fKat} onChange={(e) => setFKat(e.target.value)}>
+          <option value="Semua">Semua kategori</option>
+          {KATEGORI_INSIDENTAL.map((k) => <option key={k}>{k}</option>)}
+        </select><Ikon I={ChevronDown} size={14} /></div>
+        <Tombol onClick={() => setForm({ guruId: data.guru[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), kegiatan: "", peran: "", jam: 4, kategori: KATEGORI_INSIDENTAL[0], catatan: "", nilai: null })}>
+          <Ikon I={Plus} size={15} /> Catat Tugas
+        </Tombol>
+      </div>
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada tugas insidental pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Tanggal</th><th>Guru</th><th>Kegiatan</th><th>Peran</th><th className="ka">Jam</th><th>Kategori</th><th>Penilaian KS</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td className="nowrap teks-kecil">{fmtTgl(r.tanggal)}</td>
+                  <td><strong>{namaGuru(r.guruId)}</strong></td>
+                  <td>{r.kegiatan}{r.catatan && <div className="teks-kecil">{r.catatan}</div>}</td>
+                  <td className="teks-kecil">{r.peran || "-"}</td>
+                  <td className="ka">{r.jam}</td>
+                  <td><Lencana warna={KAT_WARNA[r.kategori]}>{r.kategori}</Lencana></td>
+                  <td><NilaiPilih nilai={r.nilai} onUbah={(v) => aman(perbaruiDok(KOLEKSI.insidental, r.id, { nilai: v }))} /></td>
+                  <td className="aksi">
+                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
+                    <button className="btn-ikon bahaya" title="Hapus" onClick={() => window.confirm("Hapus catatan tugas ini?") && aman(hapusDok(KOLEKSI.insidental, r.id))}><Ikon I={Trash2} size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Tugas Insidental" : "Catat Tugas Insidental"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <div className="grid-2-form">
+              <Kolom label="Guru" wajib>
+                <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
+                  {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                </select>
+              </Kolom>
+              <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
+            </div>
+            <Kolom label="Nama kegiatan" wajib><input value={form.kegiatan} onChange={(e) => setForm({ ...form, kegiatan: e.target.value })} placeholder="Panitia Wisuda, Juri Lomba, …" /></Kolom>
+            <div className="grid-2-form">
+              <Kolom label="Peran"><input value={form.peran} onChange={(e) => setForm({ ...form, peran: e.target.value })} placeholder="Ketua, anggota, pemateri…" /></Kolom>
+              <Kolom label="Beban kerja (jam)"><input type="number" min="0" value={form.jam} onChange={(e) => setForm({ ...form, jam: Number(e.target.value) })} /></Kolom>
+            </div>
+            <Kolom label="Kategori">
+              <select value={form.kategori} onChange={(e) => setForm({ ...form, kategori: e.target.value })}>
+                {KATEGORI_INSIDENTAL.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Catatan kualitas pelaksanaan"><textarea rows={2} value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} /></Kolom>
+            <Kolom label="Penilaian Kepala Sekolah">
+              <NilaiPilih nilai={form.nilai} onUbah={(v) => setForm({ ...form, nilai: v })} />
+            </Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAB SUPERVISI PEMBELAJARAN (Guru & Tenaga Kependidikan) ================= */
+
+function TabSupervisi({ data, ta, sem }) {
+  const [form, setForm] = useState(null);
+  const [fGuru, setFGuru] = useState("Semua");
+
+  const guruRelevan = urutkanNama(data.guru.filter(bukanAdministrasi));
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = (data.supervisi || [])
+    .filter((r) => cocokFilter(r.tanggal, ta, sem))
+    .filter((r) => fGuru === "Semua" || r.guruId === fGuru)
+    .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+
+  const simpan = () => {
+    if (!form.guruId || !form.tanggal || !form.tahapan || !form.nilai) return;
+    if (form.id) aman(perbaruiDok(KOLEKSI.supervisi, form.id, form));
+    else aman(tambahDok(KOLEKSI.supervisi, form));
+    setForm(null);
+  };
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat bungkus">
+        <p className="keterangan">Penilaian fungsional hasil supervisi pembelajaran untuk Guru & Tenaga Kependidikan — tiga tahapan, skala 1–5.</p>
+        <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
+          <option value="Semua">Semua pegawai</option>
+          {guruRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+        </select><Ikon I={ChevronDown} size={14} /></div>
+        <Tombol onClick={() => setForm({ guruId: guruRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), tahapan: TAHAPAN_SUPERVISI[0], nilai: null, catatan: "" })}>
+          <Ikon I={Plus} size={15} /> Catat Hasil Supervisi
+        </Tombol>
+      </div>
+
+      {guruRelevan.length === 0 && <Kartu><Kosong pesan="Belum ada pegawai berkategori Guru/Tenaga Kependidikan. Tambahkan di tab Data Guru." /></Kartu>}
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada hasil supervisi pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Tanggal</th><th>Pegawai</th><th>Tahapan</th><th>Penilaian</th><th>Catatan</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td className="nowrap teks-kecil">{fmtTgl(r.tanggal)}</td>
+                  <td><strong>{namaGuru(r.guruId)}</strong></td>
+                  <td className="teks-kecil">{r.tahapan}</td>
+                  <td><LencanaSkala5 nilai={r.nilai} /></td>
+                  <td className="teks-kecil">{r.catatan || "-"}</td>
+                  <td className="aksi">
+                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
+                    <button className="btn-ikon bahaya" title="Hapus" onClick={() => window.confirm("Hapus catatan supervisi ini?") && aman(hapusDok(KOLEKSI.supervisi, r.id))}><Ikon I={Trash2} size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Hasil Supervisi" : "Catat Hasil Supervisi Pembelajaran"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <div className="grid-2-form">
+              <Kolom label="Pegawai" wajib>
+                <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
+                  {guruRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                </select>
+              </Kolom>
+              <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
+            </div>
+            <Kolom label="Tahapan Supervisi" wajib>
+              <select value={form.tahapan} onChange={(e) => setForm({ ...form, tahapan: e.target.value })}>
+                {TAHAPAN_SUPERVISI.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Nilai (1–5)" wajib>
+              <PemilihSkala5 nilai={form.nilai} onUbah={(n) => setForm({ ...form, nilai: n })} />
+            </Kolom>
+            <Kolom label="Catatan hasil supervisi"><textarea rows={3} value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} /></Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAB PENILAIAN ADMINISTRASI (Tenaga Administrasi) ================= */
+
+function TabAdministrasi({ data, ta, sem }) {
+  const [form, setForm] = useState(null);
+  const [fGuru, setFGuru] = useState("Semua");
+
+  const pegawaiRelevan = urutkanNama(data.guru.filter((g) => (g.kategori || "Guru") === "Tenaga Administrasi"));
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const daftar = (data.administrasi || [])
+    .filter((r) => cocokFilter(r.tanggal, ta, sem))
+    .filter((r) => fGuru === "Semua" || r.guruId === fGuru)
+    .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+
+  const simpan = () => {
+    if (!form.guruId || !form.tanggal || !form.kriteria || !form.nilai) return;
+    if (form.id) aman(perbaruiDok(KOLEKSI.administrasi, form.id, form));
+    else aman(tambahDok(KOLEKSI.administrasi, form));
+    setForm(null);
+  };
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat bungkus">
+        <p className="keterangan">Lembar penilaian kinerja untuk Tenaga Administrasi — kriteria berbeda dari guru, skala 1–5.</p>
+        <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
+          <option value="Semua">Semua tenaga administrasi</option>
+          {pegawaiRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+        </select><Ikon I={ChevronDown} size={14} /></div>
+        <Tombol onClick={() => setForm({ guruId: pegawaiRelevan[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), kriteria: KRITERIA_ADMINISTRASI[0], nilai: null, catatan: "" })}>
+          <Ikon I={Plus} size={15} /> Catat Penilaian
+        </Tombol>
+      </div>
+
+      {pegawaiRelevan.length === 0 && <Kartu><Kosong pesan='Belum ada pegawai berkategori "Tenaga Administrasi". Tambahkan atau ubah kategorinya di tab Data Guru.' /></Kartu>}
+
+      <Kartu>
+        {daftar.length === 0 ? <Kosong pesan="Belum ada penilaian administrasi pada filter ini." /> : (
+          <div className="tabel-bungkus"><table>
+            <thead><tr><th>Tanggal</th><th>Tenaga Administrasi</th><th>Kriteria</th><th>Penilaian</th><th>Catatan</th><th></th></tr></thead>
+            <tbody>
+              {daftar.map((r) => (
+                <tr key={r.id}>
+                  <td className="nowrap teks-kecil">{fmtTgl(r.tanggal)}</td>
+                  <td><strong>{namaGuru(r.guruId)}</strong></td>
+                  <td className="teks-kecil">{r.kriteria}</td>
+                  <td><LencanaSkala5 nilai={r.nilai} /></td>
+                  <td className="teks-kecil">{r.catatan || "-"}</td>
+                  <td className="aksi">
+                    <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
+                    <button className="btn-ikon bahaya" title="Hapus" onClick={() => window.confirm("Hapus penilaian ini?") && aman(hapusDok(KOLEKSI.administrasi, r.id))}><Ikon I={Trash2} size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </Kartu>
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Penilaian Administrasi" : "Catat Penilaian Kinerja Administrasi"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <div className="grid-2-form">
+              <Kolom label="Tenaga Administrasi" wajib>
+                <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
+                  {pegawaiRelevan.map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                </select>
+              </Kolom>
+              <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
+            </div>
+            <Kolom label="Kriteria Penilaian" wajib>
+              <select value={form.kriteria} onChange={(e) => setForm({ ...form, kriteria: e.target.value })}>
+                {KRITERIA_ADMINISTRASI.map((k) => <option key={k}>{k}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Nilai (1–5)" wajib>
+              <PemilihSkala5 nilai={form.nilai} onUbah={(n) => setForm({ ...form, nilai: n })} />
+            </Kolom>
+            <Kolom label="Catatan"><textarea rows={3} value={form.catatan} onChange={(e) => setForm({ ...form, catatan: e.target.value })} /></Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAB CATATAN KINERJA ================= */
+
+const IKON_CATATAN = { "Prestasi": Award, "Inovasi": Lightbulb, "Kedisiplinan": ShieldCheck, "Pembinaan": NotebookPen, "Pelanggaran Ringan": AlertTriangle };
+
+function TabCatatan({ data, ta, sem }) {
+  const [form, setForm] = useState(null);
+  const [fGuru, setFGuru] = useState("Semua");
+
+  const daftar = data.catatan
+    .filter((r) => cocokFilter(r.tanggal, ta, sem))
+    .filter((r) => fGuru === "Semua" || r.guruId === fGuru)
+    .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+  const namaGuru = (id) => data.guru.find((g) => g.id === id)?.nama || "—";
+
+  const simpan = () => {
+    if (!form.guruId || !form.tanggal || !form.deskripsi.trim() || !form.nilai) return;
+    if (form.id) aman(perbaruiDok(KOLEKSI.catatan, form.id, form));
+    else aman(tambahDok(KOLEKSI.catatan, form));
+    setForm(null);
+  };
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat">
+        <div className="pilih-bungkus"><select value={fGuru} onChange={(e) => setFGuru(e.target.value)}>
+          <option value="Semua">Semua guru</option>
+          {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+        </select><Ikon I={ChevronDown} size={14} /></div>
+        <Tombol onClick={() => setForm({ guruId: data.guru[0]?.id || "", tanggal: new Date().toISOString().slice(0, 10), jenis: JENIS_CATATAN[0], nilai: 3, deskripsi: "", bukti: "" })}>
+          <Ikon I={Plus} size={15} /> Tulis Catatan
+        </Tombol>
+      </div>
+
+      {daftar.length === 0 ? <Kartu><Kosong pesan="Belum ada catatan kinerja pada filter ini." /></Kartu> : (
+        <div className="grid-catatan">
+          {daftar.map((r) => {
+            const Ic = IKON_CATATAN[r.jenis] || NotebookPen;
+            const ni = infoNilaiCatatan(r.nilai);
+            const skor = skorCatatanItem(r);
+            return (
+              <Kartu key={r.id} className="catatan-kartu" style={{ borderTop: `3px solid ${ni.warna}`, background: ni.latar }}>
+                <div className="catatan-atas">
+                  <span className="baris-lencana">
+                    <Lencana warna={ni.warna}>{r.nilai} — {ni.label} ({skor > 0 ? "+" : ""}{skor})</Lencana>
+                    <Lencana warna={CAT_WARNA[r.jenis]}><Ikon I={Ic} size={12} /> {r.jenis}</Lencana>
+                  </span>
+                  <span className="teks-kecil">{fmtTgl(r.tanggal)}</span>
+                </div>
+                <strong>{namaGuru(r.guruId)}</strong>
+                <p>{r.deskripsi}</p>
+                {r.bukti && <a href={r.bukti} target="_blank" rel="noreferrer" className="tautan">Bukti / dokumentasi</a>}
+                <div className="aksi kanan">
+                  <button className="btn-ikon" title="Ubah" onClick={() => setForm({ ...r })}><Ikon I={Pencil} size={15} /></button>
+                  <button className="btn-ikon bahaya" title="Hapus" onClick={() => window.confirm("Hapus catatan ini?") && aman(hapusDok(KOLEKSI.catatan, r.id))}><Ikon I={Trash2} size={15} /></button>
+                </div>
+              </Kartu>
+            );
+          })}
+        </div>
+      )}
+
+      {form && (
+        <Modal judul={form.id ? "Ubah Catatan Kinerja" : "Tulis Catatan Kinerja"} onTutup={() => setForm(null)}>
+          <div className="form-grid">
+            <div className="grid-2-form">
+              <Kolom label="Guru" wajib>
+                <select value={form.guruId} onChange={(e) => setForm({ ...form, guruId: e.target.value })}>
+                  {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+                </select>
+              </Kolom>
+              <Kolom label="Tanggal" wajib><input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} /></Kolom>
+            </div>
+            <Kolom label="Jenis catatan">
+              <select value={form.jenis} onChange={(e) => setForm({ ...form, jenis: e.target.value })}>
+                {JENIS_CATATAN.map((j) => <option key={j}>{j}</option>)}
+              </select>
+            </Kolom>
+            <Kolom label="Nilai (1–5)" wajib>
+              <PemilihSkala5 nilai={form.nilai} onUbah={(n) => setForm({ ...form, nilai: n })} />
+            </Kolom>
+            <Kolom label="Deskripsi" wajib><textarea rows={3} value={form.deskripsi} onChange={(e) => setForm({ ...form, deskripsi: e.target.value })} /></Kolom>
+            <Kolom label="Tautan bukti / dokumentasi"><input value={form.bukti} onChange={(e) => setForm({ ...form, bukti: e.target.value })} placeholder="https://…" /></Kolom>
+          </div>
+          <div className="form-aksi">
+            <Tombol varian="netral" onClick={() => setForm(null)}>Batal</Tombol>
+            <Tombol onClick={simpan}>Simpan</Tombol>
+          </div>
+
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ================= TAB LAPORAN ================= */
+
+function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
+  const [guruId, setGuruId] = useState(kunciGuruId || data.guru[0]?.id || "");
+  useEffect(() => {
+    if (kunciGuruId) { setGuruId(kunciGuruId); return; }
+    if (!data.guru.find((g) => g.id === guruId)) setGuruId(data.guru[0]?.id || "");
+  }, [data.guru, guruId, kunciGuruId]);
+
+  if (!guruId) return <Kartu><Kosong pesan="Tambahkan data guru terlebih dahulu di tab Data Guru." /></Kartu>;
+
+  const p = hitungProfil(guruId, data, ta, sem);
+  const labelPeriode = `TA ${ta}${sem === "Semua" ? "" : " · Semester " + sem}`;
+
+  const eksporGuru = () => {
+    const baris = [
+      ["LAPORAN KINERJA GURU"], [data.pengaturan.namaSekolah], [labelPeriode], [],
+      ["Nama", p.g.nama], ["NIK/NIP", p.g.nik], ["Kategori", p.kategoriPegawai], ["Mapel/Jabatan", p.g.mapel],
+      ["Beban Kerja (jam/minggu)", p.g.jam], ["Status", p.g.status], [],
+      ["TUGAS STRUKTURAL", `(bobot x${BOBOT.struktural})`], ["Jabatan", "SK", "Mulai", "Selesai", "Tupoksi", "Penilaian", "Skor"],
+      ...p.str.map((r) => [r.jabatan, r.sk, r.mulai, r.selesai, r.tupoksi, labelNilai(r.nilai), Number(r.nilai) ? Number(r.nilai) * BOBOT.struktural : ""]), [],
+      ["TUGAS INSIDENTAL", `(bobot x${BOBOT.insidental})`], ["Tanggal", "Kegiatan", "Peran", "Jam", "Kategori", "Catatan", "Penilaian", "Skor"],
+      ...p.ins.map((r) => [r.tanggal, r.kegiatan, r.peran, r.jam, r.kategori, r.catatan, labelNilai(r.nilai), Number(r.nilai) ? Number(r.nilai) * BOBOT.insidental : ""]), [],
+      [p.kategoriPegawai === "Tenaga Administrasi" ? "PENILAIAN KINERJA ADMINISTRASI" : "SUPERVISI PEMBELAJARAN", "(skala 1-5)"],
+      p.kategoriPegawai === "Tenaga Administrasi" ? ["Tanggal", "Kriteria", "Nilai", "Catatan"] : ["Tanggal", "Tahapan", "Nilai", "Catatan"],
+      ...(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup).map((r) => [r.tanggal, r.kriteria || r.tahapan, r.nilai, r.catatan]), [],
+      ["CATATAN KINERJA"], ["Tanggal", "Jenis", "Nilai", "Predikat", "Deskripsi", "Indikator ± (per-item, bukan bagian Skor Total)"],
+      ...p.cat.map((r) => [r.tanggal, r.jenis, r.nilai, infoNilaiCatatan(r.nilai).label, r.deskripsi, skorCatatanItem(r)]), [],
+      ["PENILAIAN AKHLAK MANDIRI", "(reflektif, tidak dihitung ke Skor Total)"],
+      ["TA/Semester", "Status", ...DIMENSI_AKHLAK.map((d) => d.label)],
+      ...(data.akhlak || []).filter((r) => r.guruId === guruId).map((r) => [
+        `${r.ta} · ${r.semester}`, r.status, ...DIMENSI_AKHLAK.map((d) => r[d.kunci]?.nilai ?? "-"),
+      ]), [],
+      ["REKAP SKOR", "(semua komponen = rata-rata nilai × bobot, sehingga Skor Total maksimal 100)"],
+      [`Skor Supervisi/Administrasi (bobot x${BOBOT.fungsional}, tertinggi)`, p.skorFungsionalBobot],
+      [`Skor tugas struktural (bobot x${BOBOT.struktural})`, p.skorStruktural],
+      [`Skor tugas insidental (bobot x${BOBOT.insidental})`, p.skorInsidental],
+      [`Skor catatan kinerja (bobot x${BOBOT.catatan})`, p.skorCatatan],
+      ["SKOR TOTAL (maksimal 100)", p.skorTotal],
+      [`Rata-rata ${p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (1-5)`, p.skorFungsional ?? "-"],
+      ["Rata-rata Catatan Kinerja (1-5)", p.cat.length ? p.rataCatatan.toFixed(2) : "-"],
+      ["Indikator Catatan Kinerja net (referensi, bukan bagian Skor Total)", p.netCatatan],
+    ];
+    unduhCSV(`laporan-${p.g.nama.split(",")[0].replace(/\W+/g, "-")}.csv`, baris);
+  };
+
+  const eksporSemua = () => {
+    const baris = [
+      ["REKAP KINERJA SELURUH GURU", data.pengaturan.namaSekolah, labelPeriode], [],
+      ["Nama", "Kategori", "NIK/NIP", "Mapel/Jabatan", "Jam", `Skor Fungsional (x${BOBOT.fungsional}, tertinggi)`, "Rata2 Supervisi/Administrasi (1-5)", "Jml Tugas Struktural", "Rata2 Nilai Struktural", `Skor Struktural (x${BOBOT.struktural})`, "Jml Tugas Insidental", "Rata2 Nilai Insidental", "Total Jam Insidental", `Skor Insidental (x${BOBOT.insidental})`, "Tugas Belum Dinilai", "Jml Catatan", `Skor Catatan (x${BOBOT.catatan})`, "SKOR TOTAL (maks. 100)"],
+      ...urutkanNama(data.guru).map((g) => {
+        const q = hitungProfil(g.id, data, ta, sem);
+        return [g.nama, q.kategoriPegawai, g.nik, g.mapel, g.jam, q.skorFungsionalBobot, q.skorFungsional ?? "", q.str.length, q.rataStruktural ? q.rataStruktural.toFixed(2) : "", q.skorStruktural, q.ins.length, q.rataInsidental ? q.rataInsidental.toFixed(2) : "", q.totalJamIns, q.skorInsidental, q.belumDinilai, q.cat.length, q.skorCatatan, q.skorTotal];
+      }),
+    ];
+    unduhCSV("rekap-kinerja-seluruh-guru.csv", baris);
+  };
+
+  const donat = p.perJenisCatatan.filter((d) => d.jumlah > 0);
+
+  return (
+    <div className="susun-v">
+      <div className="baris-alat bungkus">
+        {kunciGuruId ? (
+          <span className="sub" style={{ fontSize: 13 }}>Laporan kinerja pribadi — hanya data Anda yang ditampilkan.</span>
+        ) : (
+          <div className="pilih-bungkus besar"><select value={guruId} onChange={(e) => setGuruId(e.target.value)}>
+            {urutkanNama(data.guru).map((g) => <option key={g.id} value={g.id}>{g.nama}</option>)}
+          </select><Ikon I={ChevronDown} size={14} /></div>
+        )}
+        <div className="baris-alat">
+          <Tombol varian="netral" onClick={eksporGuru}><Ikon I={Download} size={15} /> Ekspor CSV {kunciGuruId ? "Laporan Saya" : "Guru Ini"}</Tombol>
+          {!kunciGuruId && <Tombol varian="netral" onClick={eksporSemua}><Ikon I={Download} size={15} /> Ekspor Rekap Semua Guru</Tombol>}
+          <Tombol onClick={() => window.print()}><Ikon I={Download} size={15} /> Cetak / Simpan PDF</Tombol>
+        </div>
+      </div>
+
+      <div id="laporan-cetak" className="susun-v">
+        <Kartu className="laporan-kepala">
+          <div className="laporan-kop">
+            <div className="kepala-logo besar"><LogoSekolah size={52} /></div>
+            <div>
+              <h2>Laporan Kinerja Pegawai — {labelPeriode}</h2>
+              <p className="sub">{data.pengaturan.namaSekolah}</p>
+            </div>
+            <div className="skor-total">
+              <span>Skor Total</span>
+              <strong>{p.skorTotal}</strong>
+            </div>
+          </div>
+          <div className="laporan-identitas">
+            <div><span>Nama</span><strong>{p.g.nama}</strong></div>
+            <div><span>NIK/NIP</span><strong>{p.g.nik || "-"}</strong></div>
+            <div><span>Kategori</span><strong>{p.kategoriPegawai}</strong></div>
+            <div><span>{p.kategoriPegawai === "Guru" ? "Mata Pelajaran" : "Jabatan/Bidang Tugas"}</span><strong>{p.g.mapel || "-"}</strong></div>
+            <div><span>Status</span><strong>{p.g.status}</strong></div>
+          </div>
+          <div className="skor-rincian">
+            <div style={{ background: p.skorFungsional === null ? undefined : `${warnaRataSkala5(p.skorFungsional)}18`, border: "1.5px solid", borderColor: p.skorFungsional === null ? "var(--garis)" : `${warnaRataSkala5(p.skorFungsional)}55` }}>
+              <span>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Supervisi Pembelajaran"} (bobot ×{BOBOT.fungsional} — tertinggi)</span>
+              <strong style={{ color: p.skorFungsional === null ? undefined : warnaRataSkala5(p.skorFungsional) }}>{p.skorFungsionalBobot}</strong>
+              <em>Rata-rata {p.skorFungsional ?? "-"} × {BOBOT.fungsional} ({labelRataSkala5(p.skorFungsional)})</em>
+            </div>
+            <div><span>Struktural (bobot ×{BOBOT.struktural})</span><strong>{p.skorStruktural}</strong><em>Rata-rata {p.rataStruktural ? p.rataStruktural.toFixed(2) : "-"} × {BOBOT.struktural} dari {p.str.length} jabatan</em></div>
+            <div><span>Insidental (bobot ×{BOBOT.insidental})</span><strong>{p.skorInsidental}</strong><em>Rata-rata {p.rataInsidental ? p.rataInsidental.toFixed(2) : "-"} × {BOBOT.insidental} dari {p.ins.length} tugas</em></div>
+            <div style={{ background: p.cat.length ? `${warnaRataSkala5(p.rataCatatan)}18` : undefined }}>
+              <span>Catatan Kinerja (bobot ×{BOBOT.catatan})</span>
+              <strong style={{ color: p.cat.length ? warnaRataSkala5(p.rataCatatan) : undefined }}>{p.skorCatatan}</strong>
+              <em>Rata-rata {p.cat.length ? p.rataCatatan.toFixed(2) : "-"} × {BOBOT.catatan} · {p.cat.filter((r) => Number(r.nilai) >= 4).length} baik/sgt.baik · {p.cat.filter((r) => Number(r.nilai) === 3).length} standar · {p.cat.filter((r) => Number(r.nilai) <= 2).length} bermasalah</em>
+            </div>
+          </div>
+          <p className="teks-kecil" style={{ marginTop: 8, color: "#6b7a6e" }}>
+            Skor Total = jumlah keempat komponen di atas (rata-rata × bobot masing-masing), maksimal <strong>100</strong> — tidak terpengaruh banyaknya jumlah entri penilaian.
+          </p>
+          {p.belumDinilai > 0 && (
+            <p className="peringatan-nilai">
+              <Ikon I={AlertTriangle} size={14} /> {p.belumDinilai} tugas belum dinilai dan belum masuk akumulasi skor. Beri penilaian di tab Tugas Struktural / Insidental.
+            </p>
+          )}
+        </Kartu>
+
+        <Kartu>
+          <div className="kartu-kepala">
+            <h2>{p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Kinerja Administrasi" : "Hasil Supervisi Pembelajaran"}</h2>
+            <span className="sub">Skala 1–5 per {p.kategoriPegawai === "Tenaga Administrasi" ? "kriteria" : "tahapan"}</span>
+          </div>
+          {(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).every((d) => d.nilai === null) ? (
+            <Kosong pesan={`Belum ada penilaian ${p.kategoriPegawai === "Tenaga Administrasi" ? "administrasi" : "supervisi pembelajaran"} pada periode ini.`} />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart
+                data={(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).map((d) => ({ ...d, label: (d.kriteria || d.tahapan) }))}
+                layout="vertical" margin={{ left: 8, right: 30, top: 4, bottom: 4 }}
+              >
+                <CartesianGrid horizontal={false} stroke="#e4e8e2" />
+                <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
+                <YAxis type="category" dataKey="label" width={220} tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Bar dataKey="nilai" radius={[0, 4, 4, 0]} barSize={22}>
+                  {(p.kategoriPegawai === "Tenaga Administrasi" ? p.perKriteriaAdministrasi : p.perTahapanSupervisi).map((d, i) => (
+                    <Cell key={i} fill={d.nilai === null ? "#c7d0c9" : warnaRataSkala5(d.nilai)} />
+                  ))}
+                  <LabelList dataKey="nilai" position="right" formatter={(v) => (v === null || v === undefined ? "-" : v)} style={{ fontSize: 12, fontWeight: 700 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Kartu>
+
+        <div className="grid-2">
+          <Kartu>
+            <div className="kartu-kepala"><h2>Profil Kinerja</h2><span className="sub">Skala 0–100 per dimensi</span></div>
+            <ResponsiveContainer width="100%" height={280}>
+              <RadarChart data={p.radar} outerRadius="72%">
+                <PolarGrid stroke="#dfe5dc" />
+                <PolarAngleAxis dataKey="dimensi" tick={{ fontSize: 11 }} />
+                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+                <Radar dataKey="nilai" stroke="#1a5632" fill="#1a5632" fillOpacity={0.28} />
+                <Tooltip />
+              </RadarChart>
+            </ResponsiveContainer>
+          </Kartu>
+
+          <Kartu>
+            <div className="kartu-kepala"><h2>Tugas Insidental per Kategori</h2><span className="sub">Jumlah tugas & total jam</span></div>
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={p.perKategori} margin={{ top: 8, right: 8, left: -18, bottom: 4 }}>
+                <CartesianGrid vertical={false} stroke="#e4e8e2" />
+                <XAxis dataKey="kategori" tick={{ fontSize: 10 }} interval={0} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="jumlah" name="Jumlah tugas" fill="#1a5632" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="jam" name="Total jam" fill="#c2912e" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Kartu>
+
+          <Kartu>
+            <div className="kartu-kepala"><h2>Tren Beban Tugas Tambahan</h2><span className="sub">Jam per bulan, Juli–Juni</span></div>
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={p.perBulan} margin={{ top: 8, right: 12, left: -18, bottom: 4 }}>
+                <CartesianGrid vertical={false} stroke="#e4e8e2" />
+                <XAxis dataKey="bulan" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey="jam" name="Jam" stroke="#1a5632" strokeWidth={2.5} dot={{ r: 3, fill: "#1a5632" }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </Kartu>
+
+          <Kartu>
+            <div className="kartu-kepala"><h2>Proporsi Catatan Kinerja</h2><span className="sub">Per jenis catatan</span></div>
+            {donat.length === 0 ? <Kosong pesan="Belum ada catatan kinerja pada periode ini." /> : (
+              <ResponsiveContainer width="100%" height={240}>
+                <PieChart>
+                  <Pie data={donat} dataKey="jumlah" nameKey="jenis" innerRadius={55} outerRadius={85} paddingAngle={2}>
+                    {donat.map((d) => <Cell key={d.jenis} fill={CAT_WARNA[d.jenis]} />)}
+                  </Pie>
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </Kartu>
+        </div>
+
+        <Kartu>
+          <div className="kartu-kepala">
+            <h2>Rincian {p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Hasil Supervisi Pembelajaran"}</h2>
+            <span className="sub">Termasuk catatan dari Kepala Sekolah pada tiap penilaian</span>
+          </div>
+          {(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup).length === 0 ? (
+            <p className="teks-redup">Belum ada penilaian {p.kategoriPegawai === "Tenaga Administrasi" ? "administrasi" : "supervisi pembelajaran"} pada periode ini.</p>
+          ) : (
+            <div className="tabel-bungkus"><table>
+              <thead><tr><th>Tanggal</th><th>{p.kategoriPegawai === "Tenaga Administrasi" ? "Kriteria" : "Tahapan"}</th><th>Penilaian</th><th>Catatan</th></tr></thead>
+              <tbody>
+                {[...(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup)]
+                  .sort((a, b) => (a.tanggal || "").localeCompare(b.tanggal || ""))
+                  .map((r) => (
+                    <tr key={r.id}>
+                      <td className="teks-kecil nowrap">{fmtTgl(r.tanggal)}</td>
+                      <td className="teks-kecil">{r.kriteria || r.tahapan}</td>
+                      <td><LencanaSkala5 nilai={r.nilai} /></td>
+                      <td className="teks-kecil">{r.catatan || "-"}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table></div>
+          )}
+        </Kartu>
+
+        <Kartu>
+          <div className="kartu-kepala"><h2>Rincian Tugas Struktural</h2></div>
+          {p.str.length === 0 ? <p className="teks-redup">Tidak ada jabatan struktural.</p> : (
+            <div className="tabel-bungkus"><table>
+              <thead><tr><th>Jabatan</th><th>SK</th><th>Periode</th><th>Tupoksi</th><th>Penilaian</th><th className="ka">Skor</th></tr></thead>
+              <tbody>{p.str.map((r) => (
+                <tr key={r.id}><td><strong>{r.jabatan}</strong></td><td className="teks-kecil">{r.sk || "-"}</td>
+                  <td className="teks-kecil nowrap">{fmtTgl(r.mulai)} – {fmtTgl(r.selesai)}</td><td className="teks-kecil">{r.tupoksi || "-"}</td>
+                  <td><LencanaNilai nilai={r.nilai} /></td>
+                  <td className="ka"><strong>{Number(r.nilai) ? Number(r.nilai) * BOBOT.struktural : "-"}</strong></td></tr>
+              ))}</tbody>
+            </table></div>
+          )}
+        </Kartu>
+
+        <Kartu>
+          <div className="kartu-kepala"><h2>Rincian Tugas Insidental</h2><span className="sub">{p.ins.length} tugas · {p.totalJamIns} jam</span></div>
+          {p.ins.length === 0 ? <p className="teks-redup">Tidak ada tugas insidental pada periode ini.</p> : (
+            <div className="tabel-bungkus"><table>
+              <thead><tr><th>Tanggal</th><th>Kegiatan</th><th>Peran</th><th className="ka">Jam</th><th>Kategori</th><th>Penilaian</th><th className="ka">Skor</th></tr></thead>
+              <tbody>{[...p.ins].sort((a, b) => a.tanggal.localeCompare(b.tanggal)).map((r) => (
+                <tr key={r.id}><td className="teks-kecil nowrap">{fmtTgl(r.tanggal)}</td><td>{r.kegiatan}</td>
+                  <td className="teks-kecil">{r.peran || "-"}</td><td className="ka">{r.jam}</td>
+                  <td><Lencana warna={KAT_WARNA[r.kategori]}>{r.kategori}</Lencana></td>
+                  <td><LencanaNilai nilai={r.nilai} /></td>
+                  <td className="ka"><strong>{Number(r.nilai) ? Number(r.nilai) * BOBOT.insidental : "-"}</strong></td></tr>
+              ))}</tbody>
+            </table></div>
+          )}
+        </Kartu>
+      </div>
+    </div>
+  );
+}
+
+/* ================= GAYA ================= */
+
+function Gaya() {
+  return <style>{`
+    :root {
+      --hijau: #1a5632; --hijau-tua: #0f3d22; --hijau-muda: #eaf2ec;
+      --emas: #c2912e; --tinta: #24301f; --redup: #6b7a6e;
+      --garis: #dfe5dc; --latar: #f6f7f4; --kartu: #ffffff; --bahaya: #b23a3a;
+    }
+    * { box-sizing: border-box; }
+    .app {
+      min-height: 100vh; background: var(--latar); color: var(--tinta);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif; font-size: 14px;
+      display: flex; flex-direction: column;
+    }
+    .muat { padding: 48px; text-align: center; color: #6b7a6e; font-family: system-ui; }
+
+    .kepala {
+      background: linear-gradient(120deg, var(--hijau-tua), var(--hijau) 70%);
+      color: #fff; padding: 18px 22px; display: flex; justify-content: space-between;
+      align-items: center; gap: 16px; flex-wrap: wrap;
+    }
+    .kepala-merek { display: flex; align-items: center; gap: 13px; }
+    .kepala-logo {
+      width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+      background: #ffffff; border: 1px solid rgba(255,255,255,.5); padding: 2px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.15);
+    }
+    .kepala-logo.besar { width: 52px; height: 52px; background: #ffffff; border-color: var(--garis); padding: 2px; }
+    .kepala h1 { margin: 0; font-size: 19px; letter-spacing: .2px; font-family: Georgia, "Times New Roman", serif; }
+    .kepala p { margin: 2px 0 0; font-size: 12.5px; opacity: .85; }
+    .kepala-filter { display: flex; gap: 8px; }
+
+    .galat-bar { background: #fbecec; color: var(--bahaya); padding: 8px 22px; font-size: 13px; border-bottom: 1px solid #f0d4d4; }
+    .banner-notif {
+      display: flex; align-items: center; gap: 12px; padding: 10px 22px;
+      background: var(--hijau-muda); color: var(--hijau-tua); font-size: 13px;
+      border-bottom: 1px solid #cfe2d4;
+    }
+    .banner-notif span { flex: 1; }
+    @media (max-width: 640px) { .banner-notif { flex-wrap: wrap; } }
+
+    .navigasi {
+      display: flex; gap: 2px; padding: 0 14px; background: var(--kartu);
+      border-bottom: 1px solid var(--garis); overflow-x: auto;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 7px; padding: 12px 14px; border: none;
+      background: none; cursor: pointer; font: inherit; font-size: 13.5px; color: var(--redup);
+      border-bottom: 2.5px solid transparent; white-space: nowrap;
+    }
+    .nav-item:hover { color: var(--hijau); }
+    .nav-item.aktif { color: var(--hijau); border-bottom-color: var(--emas); font-weight: 600; }
+    .nav-item:focus-visible, .btn:focus-visible, .btn-ikon:focus-visible { outline: 2px solid var(--emas); outline-offset: 1px; }
+
+    .isi { padding: 20px 22px; flex: 1; max-width: 1180px; width: 100%; margin: 0 auto; }
+    .kaki { text-align: center; padding: 14px; font-size: 12px; color: var(--redup); }
+
+    .susun-v { display: flex; flex-direction: column; gap: 16px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-stat { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+    .grid-catatan { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+    @media (max-width: 860px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    .kartu { background: var(--kartu); border: 1px solid var(--garis); border-radius: 10px; padding: 16px 18px; }
+    .kartu-kepala { margin-bottom: 12px; }
+    .kartu-kepala.baris { display: flex; justify-content: space-between; align-items: baseline; }
+    .kartu-kepala h2 { margin: 0; font-size: 15.5px; font-family: Georgia, serif; color: var(--hijau-tua); }
+    .sub { font-size: 12px; color: var(--redup); }
+
+    .stat { display: flex; gap: 12px; align-items: center; padding: 14px 16px; }
+    .stat-ikon { width: 38px; height: 38px; border-radius: 9px; display: grid; place-items: center; background: var(--hijau-muda); color: var(--hijau); }
+    .stat-angka { font-size: 22px; font-weight: 700; color: var(--hijau-tua); line-height: 1.1; }
+    .stat-label { font-size: 11.5px; color: var(--redup); }
+
+    .baris-alat { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .baris-alat.bungkus { flex-wrap: wrap; justify-content: flex-start; }
+    .baris-alat .baris-alat { justify-content: flex-start; }
+    .keterangan { margin: 0; color: var(--redup); font-size: 13px; max-width: 620px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 7px; border-radius: 8px; cursor: pointer;
+      font: inherit; font-size: 13.5px; font-weight: 600; padding: 9px 14px; border: 1px solid transparent;
+    }
+    .btn-utama { background: var(--hijau); color: #fff; }
+    .btn-utama:hover { background: var(--hijau-tua); }
+    .btn-netral { background: #fff; color: var(--hijau-tua); border-color: var(--garis); }
+    .btn-netral:hover { border-color: var(--hijau); }
+    .btn-kecil { padding: 6px 10px; font-size: 12.5px; }
+    .btn-ikon {
+      border: none; background: none; cursor: pointer; color: var(--redup);
+      width: 30px; height: 30px; border-radius: 7px; display: inline-grid; place-items: center;
+    }
+    .btn-ikon:hover { background: var(--hijau-muda); color: var(--hijau); }
+    .btn-ikon.bahaya:hover { background: #fbecec; color: var(--bahaya); }
+
+    .cari {
+      display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid var(--garis);
+      border-radius: 8px; padding: 8px 12px; flex: 1; max-width: 340px; color: var(--redup);
+    }
+    .cari input { border: none; outline: none; font: inherit; width: 100%; color: var(--tinta); background: none; }
+
+    .pilih-bungkus { position: relative; display: inline-flex; align-items: center; color: var(--redup); }
+    .pilih-bungkus select {
+      appearance: none; font: inherit; font-size: 13px; padding: 8px 30px 8px 12px;
+      border: 1px solid var(--garis); border-radius: 8px; background: #fff; color: var(--tinta); cursor: pointer;
+      max-width: 100%;
+    }
+    .kepala .pilih-bungkus select { background: rgba(255,255,255,.12); color: #fff; border-color: rgba(255,255,255,.3); }
+    .kepala .pilih-bungkus { color: rgba(255,255,255,.8); }
+    .kepala .pilih-bungkus select option { color: var(--tinta); }
+    .pilih-bungkus svg { position: absolute; right: 10px; pointer-events: none; }
+    .pilih-bungkus.besar select { font-size: 14.5px; font-weight: 600; min-width: 260px; }
+
+    .tabel-bungkus { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--redup); padding: 8px 10px; border-bottom: 1.5px solid var(--garis); }
+    td { padding: 10px; border-bottom: 1px solid #edf0ea; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafbf8; }
+    .ka { text-align: right; }
+    .nowrap { white-space: nowrap; }
+    .teks-kecil { font-size: 12.5px; color: var(--redup); }
+    .teks-redup { color: var(--redup); font-size: 13px; margin: 4px 0; }
+    .aksi { white-space: nowrap; text-align: right; }
+    .aksi.kanan { margin-top: 6px; }
+
+    .lencana {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700;
+      padding: 3px 8px; border-radius: 20px; border: 1px solid; white-space: nowrap;
+    }
+
+    .nilai-pilih {
+      appearance: none; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+      padding: 5px 10px; border-radius: 20px; border: 1.5px solid; min-width: 128px;
+      background-image: none;
+    }
+    .nilai-pilih:focus-visible { outline: 2px solid var(--emas); outline-offset: 1px; }
+    .peringatan-nilai {
+      display: flex; align-items: center; gap: 7px; margin: 12px 0 0; padding: 9px 13px;
+      background: #fdf8ee; border: 1px solid #ecd9ab; border-radius: 8px;
+      color: #8a6417; font-size: 12.5px;
+    }
+
+    .sesi-info { display: flex; align-items: center; gap: 10px; padding-left: 12px; border-left: 1px solid rgba(255,255,255,.25); }
+    .sesi-peran { font-size: 12.5px; opacity: .9; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .btn-keluar { background: rgba(255,255,255,.14); color: #fff; border: 1px solid rgba(255,255,255,.35); padding: 7px 12px; font-size: 12.5px; }
+    .btn-keluar:hover { background: rgba(255,255,255,.24); }
+
+    .masuk-latar {
+      min-height: 100vh; display: grid; place-items: center; padding: 20px;
+      background: linear-gradient(150deg, var(--hijau-tua), var(--hijau) 60%, #2e7d4f);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    .masuk-kotak {
+      background: #fff; border-radius: 14px; padding: 32px 30px; width: 100%; max-width: 380px;
+      text-align: center; display: flex; flex-direction: column; gap: 8px;
+      box-shadow: 0 18px 50px rgba(10,35,20,.35);
+    }
+    .masuk-kotak h1 { margin: 10px 0 0; font-size: 20px; font-family: Georgia, serif; color: var(--hijau-tua); }
+    .masuk-kotak .btn { justify-content: center; margin-top: 6px; }
+    .masuk-galat { margin: 0; color: var(--bahaya); font-size: 12.5px; text-align: left; }
+    .masuk-idle {
+      display: flex; align-items: center; gap: 7px; margin: 4px 0 0; padding: 8px 12px;
+      background: #fdf8ee; border: 1px solid #ecd9ab; border-radius: 8px;
+      color: #8a6417; font-size: 12px; text-align: left;
+    }
+    .masuk-catatan { margin: 10px 0 0; font-size: 11.5px; color: var(--redup); line-height: 1.55; }
+
+    .baris-lencana { display: flex; gap: 5px; flex-wrap: wrap; }
+
+    .nilai-catatan-pilih { display: flex; gap: 6px; flex-wrap: wrap; }
+    .nilai-catatan-tombol {
+      flex: 1; min-width: 64px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+      font: inherit; cursor: pointer; padding: 8px 6px; border-radius: 9px; border: 1.5px solid;
+    }
+    .nilai-catatan-tombol strong { font-size: 17px; line-height: 1; }
+    .nilai-catatan-tombol span { font-size: 10px; font-weight: 600; text-align: center; line-height: 1.2; }
+    .nilai-catatan-tombol:focus-visible { outline: 2px solid var(--emas); outline-offset: 1px; }
+    @media (max-width: 480px) { .nilai-catatan-tombol { min-width: 0; } }
+
+    .token-baris { display: flex; align-items: center; gap: 6px; }
+    .token-baris input {
+      font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--garis);
+      border-radius: 7px; width: 150px;
+    }
+    .token-baris input:focus { outline: 2px solid var(--hijau); outline-offset: -1px; }
+
+    .kosong { text-align: center; padding: 28px 12px; color: var(--redup); display: flex; flex-direction: column; gap: 10px; align-items: center; }
+    .kosong p { margin: 0; }
+
+    .linimasa { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+    .linimasa li { display: flex; gap: 12px; align-items: flex-start; }
+    .linimasa-tgl { font-size: 11.5px; color: var(--redup); white-space: nowrap; min-width: 84px; padding-top: 2px; }
+    .linimasa p { margin: 2px 0 0; font-size: 13px; }
+
+    .catatan-kartu { display: flex; flex-direction: column; gap: 6px; }
+    .catatan-atas { display: flex; justify-content: space-between; align-items: center; }
+
+    .baris { display: flex; align-items: center; }
+    .kartu-akhlak .kartu-kepala h2 { display: flex; align-items: center; }
+    .grid-akhlak-ringkas { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 10px; }
+    .akhlak-mini { border: 1px solid; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; }
+    .akhlak-mini strong { font-size: 13px; }
+    .blok-akhlak-form { padding: 12px; background: var(--latar); border-radius: 10px; border: 1px solid var(--garis); }
+    .blok-akhlak-form + .blok-akhlak-form { margin-top: 4px; }
+    .akhlak-detail-baris { padding: 8px 12px; background: var(--latar); border-radius: 0 8px 8px 0; }
+    .catatan-kartu p { margin: 0; font-size: 13px; line-height: 1.5; }
+    .tautan { color: var(--hijau); font-size: 12.5px; }
+
+    .modal-latar { position: fixed; inset: 0; background: rgba(20,30,22,.45); display: grid; place-items: center; padding: 18px; z-index: 50; }
+    .modal { background: #fff; border-radius: 12px; width: 100%; max-height: 90vh; overflow: auto; }
+    .modal-kepala { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px 8px; }
+    .modal-kepala h3 { margin: 0; font-size: 16px; font-family: Georgia, serif; color: var(--hijau-tua); }
+    .modal-isi { padding: 8px 20px 20px; }
+    .form-grid { display: flex; flex-direction: column; gap: 12px; }
+    .grid-2-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 520px) { .grid-2-form { grid-template-columns: 1fr; } }
+    .kolom { display: flex; flex-direction: column; gap: 5px; }
+    .kolom-label { font-size: 12px; font-weight: 600; color: var(--redup); }
+    .kolom-label em { color: var(--bahaya); font-style: normal; }
+    .kolom input, .kolom select, .kolom textarea {
+      font: inherit; font-size: 13.5px; padding: 9px 11px; border: 1px solid var(--garis);
+      border-radius: 8px; background: #fff; color: var(--tinta); width: 100%;
+    }
+    .kolom input:focus, .kolom select:focus, .kolom textarea:focus { outline: 2px solid var(--hijau); outline-offset: -1px; }
+    .form-aksi { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+    .laporan-kop { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    .laporan-kop h2 { margin: 0; font-size: 17px; font-family: Georgia, serif; color: var(--hijau-tua); }
+    .skor-total {
+      margin-left: auto; text-align: center; background: var(--hijau); color: #fff;
+      border-radius: 10px; padding: 8px 20px;
+    }
+    .skor-total span { font-size: 11px; opacity: .85; display: block; }
+    .skor-total strong { font-size: 26px; }
+    .laporan-identitas {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;
+      margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--garis);
+    }
+    .laporan-identitas span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--redup); }
+    .laporan-identitas strong { font-size: 13.5px; }
+    .skor-rincian { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 14px; }
+    @media (max-width: 640px) { .skor-rincian { grid-template-columns: 1fr; } }
+    .skor-rincian > div { background: var(--hijau-muda); border-radius: 9px; padding: 10px 14px; }
+    .skor-rincian span { font-size: 11.5px; color: var(--redup); display: block; }
+    .skor-rincian strong { font-size: 19px; color: var(--hijau-tua); }
+    .skor-rincian em { display: block; font-size: 11px; color: var(--redup); font-style: normal; }
+
+    /* ================= TAMPILAN MOBILE ================= */
+    @media (max-width: 760px) {
+      .kepala {
+        flex-direction: column; align-items: stretch; padding: 14px 14px; gap: 12px;
+      }
+      .kepala-merek { gap: 10px; }
+      .kepala-logo { width: 38px; height: 38px; }
+      .kepala h1 { font-size: 16.5px; }
+      .kepala p { font-size: 11.5px; }
+      .kepala-filter {
+        width: 100%; flex-wrap: wrap; gap: 8px;
+      }
+      .kepala-filter .pilih-bungkus { flex: 1 1 auto; min-width: 128px; }
+      .kepala-filter .pilih-bungkus select { width: 100%; font-size: 13px; padding: 9px 28px 9px 10px; }
+      .sesi-info {
+        width: 100%; justify-content: space-between; border-left: none;
+        border-top: 1px solid rgba(255,255,255,.25); padding: 10px 0 0; margin: 0;
+      }
+      .sesi-peran { max-width: none; flex: 1; }
+
+      .navigasi { padding: 0 6px; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+      .nav-item { padding: 11px 12px; font-size: 12.5px; gap: 5px; }
+
+      .isi { padding: 14px 12px; }
+      .kaki { padding: 12px; font-size: 11px; }
+
+      .grid-stat { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .stat { padding: 12px; gap: 10px; }
+      .stat-angka { font-size: 19px; }
+      .stat-label { font-size: 10.5px; }
+
+      .kartu { padding: 14px; border-radius: 9px; }
+      .kartu-kepala h2 { font-size: 14.5px; }
+
+      .baris-alat { flex-wrap: wrap; row-gap: 10px; }
+      .baris-alat.bungkus { gap: 8px; }
+      .baris-alat > .baris-alat { width: 100%; flex-wrap: wrap; }
+      .cari { max-width: none; width: 100%; }
+      .pilih-bungkus.besar { width: 100%; }
+      .pilih-bungkus.besar select { min-width: 0; width: 100%; }
+      .keterangan { max-width: none; }
+
+      .btn { padding: 10px 14px; min-height: 40px; }
+      .btn-kecil { min-height: 34px; padding: 7px 11px; }
+      .btn-ikon { width: 36px; height: 36px; }
+
+      table { font-size: 12.5px; }
+      th { padding: 7px 8px; font-size: 10px; }
+      td { padding: 8px; }
+
+      .nilai-pilih { min-width: 0; font-size: 11.5px; padding: 5px 8px; }
+
+      .modal-latar { padding: 0; align-items: flex-end; }
+      .modal { max-width: none !important; width: 100%; max-height: 94vh; border-radius: 14px 14px 0 0; }
+      .modal-kepala { padding: 14px 16px 6px; }
+      .modal-isi { padding: 6px 16px 18px; }
+      .grid-2-form { grid-template-columns: 1fr; }
+      .form-aksi { flex-direction: column-reverse; }
+      .form-aksi .btn { width: 100%; justify-content: center; }
+
+      .grid-catatan { grid-template-columns: 1fr; }
+
+      .laporan-kop { gap: 10px; }
+      .laporan-kop h2 { font-size: 15px; }
+      .skor-total { margin-left: 0; width: 100%; }
+      .laporan-identitas { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .skor-rincian { grid-template-columns: 1fr; }
+
+      .masuk-kotak { padding: 26px 20px; }
+
+      .token-baris { flex-wrap: wrap; }
+      .token-baris input { width: 100%; }
+
+      .nilai-catatan-pilih { gap: 5px; }
+      .nilai-catatan-tombol { padding: 7px 4px; }
+
+      /* Cegah auto-zoom iOS Safari saat fokus ke input (perlu font-size >= 16px) */
+      .kolom input, .kolom select, .kolom textarea, .cari input,
+      .nilai-pilih, .pilih-bungkus select { font-size: 16px !important; }
+
+      /* Tabel lebar tetap bisa digeser horizontal dengan nyaman di layar sempit */
+      .tabel-bungkus { -webkit-overflow-scrolling: touch; margin: 0 -14px; padding: 0 14px; width: calc(100% + 28px); }
+      .kartu { overflow: hidden; }
+
+      /* Header identitas sekolah tidak terpotong di layar sempit */
+      .kepala-merek { min-width: 0; }
+      .kepala-merek > div:last-child { min-width: 0; }
+      .kepala h1, .kepala p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      .lencana { font-size: 10.5px; padding: 2px 7px; }
+      .stat-ikon { width: 32px; height: 32px; }
+    }
+
+    /* Target sentuh nyaman di semua perangkat layar sentuh, bukan hanya <760px */
+    @media (hover: none) and (pointer: coarse) {
+      .btn-ikon { width: 38px; height: 38px; }
+      .nav-item { min-height: 44px; }
+      .nilai-pilih, .kolom select { min-height: 40px; }
+    }
+
+    @media (max-width: 420px) {
+      .grid-stat { grid-template-columns: 1fr; }
+      .laporan-identitas { grid-template-columns: 1fr; }
+      .kepala h1 { font-size: 15px; }
+    }
+
+    @media print {
+      .kepala, .navigasi, .baris-alat, .kaki, .galat-bar { display: none !important; }
+      .app { background: #fff; }
+      .isi { padding: 0; max-width: none; }
+      .kartu { border: 1px solid #ccc; break-inside: avoid; }
+      .grid-2 { grid-template-columns: 1fr 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+  `}</style>;
+}
