@@ -12,7 +12,7 @@ importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js
 importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js");
 
 firebase.initializeApp({
-  apiKey: "AIzaSyAphLT8A8yRkm8NFJa8pO2D2nsR_qriWc",
+  apiKey: "AIzaSyApHpLT8A8yRkm8NFJa8pO2D2nsR_qriWc",
   authDomain: "lembar-kinerja-guru-smphbs.firebaseapp.com",
   projectId: "lembar-kinerja-guru-smphbs",
   storageBucket: "lembar-kinerja-guru-smphbs.firebasestorage.app",
