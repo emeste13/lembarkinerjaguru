@@ -4,7 +4,7 @@ import { getFirestore } from "firebase/firestore";
 import { getMessaging, isSupported } from "firebase/messaging";
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyAphLT8A8yRkm8NFJa8pO2D2nsR_qriWc",
+  apiKey: "AIzaSyApHpLT8A8yRkm8NFJa8pO2D2nsR_qriWc",
   authDomain: "lembar-kinerja-guru-smphbs.firebaseapp.com",
   projectId: "lembar-kinerja-guru-smphbs",
   storageBucket: "lembar-kinerja-guru-smphbs.firebasestorage.app",
