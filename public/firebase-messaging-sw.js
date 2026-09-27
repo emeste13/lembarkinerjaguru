@@ -4,20 +4,20 @@
 //
 // PENTING: file ini TIDAK diproses oleh Vite (murni file statis di folder public/),
 // jadi firebaseConfig di bawah harus DISALIN MANUAL dan disamakan dengan isi
-// src/firebase.js setiap kali firebaseConfig berubah (mis. saat dipakai sekolah lain).
-// Nilai-nilai ini bersifat publik (bukan rahasia), aman ditulis di sini.
+// src/firebase.js setiap kali firebaseConfig berubah. Nilai-nilai ini bersifat
+// publik (bukan rahasia), aman ditulis di sini.
 // ============================================================
 
 importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js");
 
 firebase.initializeApp({
-  apiKey: "ISI_API_KEY_ANDA",
-  authDomain: "ISI_PROJECT_ID.firebaseapp.com",
-  projectId: "ISI_PROJECT_ID",
-  storageBucket: "ISI_PROJECT_ID.appspot.com",
-  messagingSenderId: "ISI_SENDER_ID",
-  appId: "ISI_APP_ID",
+  apiKey: "AIzaSyAphLT8A8yRkm8NFJa8pO2D2nsR_qriWc",
+  authDomain: "lembar-kinerja-guru-smphbs.firebaseapp.com",
+  projectId: "lembar-kinerja-guru-smphbs",
+  storageBucket: "lembar-kinerja-guru-smphbs.firebasestorage.app",
+  messagingSenderId: "233229540259",
+  appId: "1:233229540259:web:0b363184476db6e8b85816",
 });
 
 const messaging = firebase.messaging();
