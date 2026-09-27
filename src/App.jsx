@@ -5,6 +5,7 @@ import {
   tambahDok, perbaruiDok, hapusDok, hapusGuruMenyeluruh, simpanPengaturan, KOLEKSI,
   ajukanPenilaianAkhlak, validasiPenilaianAkhlak, bukaKembaliPenilaianAkhlak, idAkhlak,
   ajukanSuratTugas, perbaruiSuratTugas, batalkanSuratTugas, setujuiSuratTugas, tolakSuratTugas,
+  mintaIzinNotifikasi, statusIzinNotifikasi, kirimNotifikasiAman,
 } from "./api";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -16,7 +17,7 @@ import {
   Plus, Pencil, Trash2, Download, Search, X, GraduationCap, Award, AlertTriangle,
   Lightbulb, Clock, ShieldCheck, ChevronDown, LogIn, LogOut, KeyRound, Eye, EyeOff,
   ThumbsUp, ThumbsDown, ClipboardCheck, FileSpreadsheet, Settings, Save, Heart, Lock, Undo2,
-  FileText, MapPin, XCircle, CheckCircle2,
+  FileText, MapPin, XCircle, CheckCircle2, Bell,
 } from "lucide-react";
 
 /* ================= KONSTANTA ================= */
@@ -468,6 +469,8 @@ export default function AplikasiKinerjaGuru() {
         </nav>
       )}
 
+      <BannerNotifikasi />
+
       <main className="isi">
         {admin ? (<>
           {tab === "dasbor" && <Dasbor data={data} ta={ta} sem={sem} kePindah={setTab} />}
@@ -501,6 +504,40 @@ export default function AplikasiKinerjaGuru() {
 
 const aman = (janji) => Promise.resolve(janji).catch((e) =>
   window.alert("Operasi gagal: " + (e?.message || e)));
+
+/* ================= BANNER AKTIFKAN NOTIFIKASI ================= */
+
+function BannerNotifikasi() {
+  const [status, setStatus] = useState("default");
+  const [proses, setProses] = useState(false);
+  const [tutup, setTutup] = useState(false);
+
+  useEffect(() => { setStatus(statusIzinNotifikasi()); }, []);
+
+  const aktifkan = async () => {
+    setProses(true);
+    try {
+      await mintaIzinNotifikasi();
+      setStatus("granted");
+    } catch (e) {
+      window.alert(e?.message || "Gagal mengaktifkan notifikasi.");
+      setStatus(statusIzinNotifikasi());
+    } finally { setProses(false); }
+  };
+
+  if (tutup || status !== "default") return null; // tidak tampil bila sudah diizinkan/ditolak/tak didukung
+
+  return (
+    <div className="banner-notif">
+      <Ikon I={Bell} size={16} />
+      <span>Aktifkan notifikasi supaya Anda langsung diberi tahu saat ada pembaruan penting — tanpa perlu buka aplikasi terus-menerus.</span>
+      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <Tombol kecil onClick={aktifkan}>{proses ? "Memproses…" : "Aktifkan"}</Tombol>
+        <button className="btn-ikon" title="Tutup" onClick={() => setTutup(true)}><Ikon I={X} size={15} /></button>
+      </div>
+    </div>
+  );
+}
 
 /* ================= HALAMAN MASUK ================= */
 
@@ -886,6 +923,11 @@ function KartuAkhlakSaya({ guru, data }) {
       const isi = {};
       DIMENSI_AKHLAK.forEach((d) => { isi[d.kunci] = form[d.kunci]; });
       await ajukanPenilaianAkhlak(guru.id, taAktif, semAktif, isi);
+      kirimNotifikasiAman({
+        tujuan: "admin",
+        judul: "Penilaian Akhlak Mandiri Baru",
+        isi: `${guru.nama} mengisi penilaian akhlak mandiri untuk semester ${semAktif}.`,
+      });
       setForm(null);
     } catch (e) {
       window.alert("Gagal menyimpan: " + (e?.message || e));
@@ -981,7 +1023,15 @@ function TabValidasiAkhlak({ data, ta, sem }) {
   const menunggu = data.akhlak.filter((r) => r.status === "Menunggu Validasi").length;
 
   const validasi = async (r, catatan) => {
-    try { await validasiPenilaianAkhlak(r.id, catatan); setLihat(null); }
+    try {
+      await validasiPenilaianAkhlak(r.id, catatan);
+      kirimNotifikasiAman({
+        tujuan: "guru", guruId: r.guruId,
+        judul: "Penilaian Akhlak Divalidasi",
+        isi: `Penilaian akhlak mandiri Anda untuk semester ${r.semester} telah divalidasi Kepala Sekolah.`,
+      });
+      setLihat(null);
+    }
     catch (e) { window.alert("Gagal memvalidasi: " + (e?.message || e)); }
   };
   const bukaKembali = async (r) => {
@@ -1104,7 +1154,14 @@ function KartuSuratTugasSaya({ guru, data }) {
     try {
       const isi = { ...form, tanggalSelesai: form.tanggalSelesai || form.tanggalMulai };
       if (form.id) await perbaruiSuratTugas(form.id, isi);
-      else await ajukanSuratTugas(guru.id, isi);
+      else {
+        await ajukanSuratTugas(guru.id, isi);
+        kirimNotifikasiAman({
+          tujuan: "admin",
+          judul: "Pengajuan Surat Tugas Baru",
+          isi: `${guru.nama} mengajukan surat tugas: ${form.namaAgenda}`,
+        });
+      }
       setForm(null);
     } catch (e) {
       window.alert("Gagal menyimpan: " + (e?.message || e));
@@ -1268,6 +1325,11 @@ function ModalTinjauSurat({ pengajuan, namaGuru, onTutup }) {
     setProses(true);
     try {
       await setujuiSuratTugas(pengajuan, { kategori, jam });
+      kirimNotifikasiAman({
+        tujuan: "guru", guruId: pengajuan.guruId,
+        judul: "Surat Tugas Disetujui",
+        isi: `Pengajuan "${pengajuan.namaAgenda}" telah disetujui dan masuk sebagai Tugas Insidental.`,
+      });
       window.alert("Disetujui. Satu Tugas Insidental baru telah dibuat dan siap dinilai di tab Tugas Insidental.");
       onTutup();
     } catch (e) { window.alert("Gagal menyetujui: " + (e?.message || e)); }
@@ -1276,7 +1338,15 @@ function ModalTinjauSurat({ pengajuan, namaGuru, onTutup }) {
 
   const tolak = async () => {
     setProses(true);
-    try { await tolakSuratTugas(pengajuan.id, alasanTolak); onTutup(); }
+    try {
+      await tolakSuratTugas(pengajuan.id, alasanTolak);
+      kirimNotifikasiAman({
+        tujuan: "guru", guruId: pengajuan.guruId,
+        judul: "Surat Tugas Ditolak",
+        isi: `Pengajuan "${pengajuan.namaAgenda}" ditolak.${alasanTolak ? " Alasan: " + alasanTolak : ""}`,
+      });
+      onTutup();
+    }
     catch (e) { window.alert("Gagal menolak: " + (e?.message || e)); }
     finally { setProses(false); }
   };
@@ -2176,6 +2246,32 @@ function TabLaporan({ data, ta, sem, kunciGuruId = null }) {
         </div>
 
         <Kartu>
+          <div className="kartu-kepala">
+            <h2>Rincian {p.kategoriPegawai === "Tenaga Administrasi" ? "Penilaian Administrasi" : "Hasil Supervisi Pembelajaran"}</h2>
+            <span className="sub">Termasuk catatan dari Kepala Sekolah pada tiap penilaian</span>
+          </div>
+          {(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup).length === 0 ? (
+            <p className="teks-redup">Belum ada penilaian {p.kategoriPegawai === "Tenaga Administrasi" ? "administrasi" : "supervisi pembelajaran"} pada periode ini.</p>
+          ) : (
+            <div className="tabel-bungkus"><table>
+              <thead><tr><th>Tanggal</th><th>{p.kategoriPegawai === "Tenaga Administrasi" ? "Kriteria" : "Tahapan"}</th><th>Penilaian</th><th>Catatan</th></tr></thead>
+              <tbody>
+                {[...(p.kategoriPegawai === "Tenaga Administrasi" ? p.adm : p.sup)]
+                  .sort((a, b) => (a.tanggal || "").localeCompare(b.tanggal || ""))
+                  .map((r) => (
+                    <tr key={r.id}>
+                      <td className="teks-kecil nowrap">{fmtTgl(r.tanggal)}</td>
+                      <td className="teks-kecil">{r.kriteria || r.tahapan}</td>
+                      <td><LencanaSkala5 nilai={r.nilai} /></td>
+                      <td className="teks-kecil">{r.catatan || "-"}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table></div>
+          )}
+        </Kartu>
+
+        <Kartu>
           <div className="kartu-kepala"><h2>Rincian Tugas Struktural</h2></div>
           {p.str.length === 0 ? <p className="teks-redup">Tidak ada jabatan struktural.</p> : (
             <div className="tabel-bungkus"><table>
@@ -2244,6 +2340,13 @@ function Gaya() {
     .kepala-filter { display: flex; gap: 8px; }
 
     .galat-bar { background: #fbecec; color: var(--bahaya); padding: 8px 22px; font-size: 13px; border-bottom: 1px solid #f0d4d4; }
+    .banner-notif {
+      display: flex; align-items: center; gap: 12px; padding: 10px 22px;
+      background: var(--hijau-muda); color: var(--hijau-tua); font-size: 13px;
+      border-bottom: 1px solid #cfe2d4;
+    }
+    .banner-notif span { flex: 1; }
+    @media (max-width: 640px) { .banner-notif { flex-wrap: wrap; } }
 
     .navigasi {
       display: flex; gap: 2px; padding: 0 14px; background: var(--kartu);
