@@ -1,3 +1,8 @@
+// ============================================================
+// LAPISAN DATA — Firestore realtime + Firebase Authentication
+// Tidak perlu diubah. Semua komponen memakai fungsi dari sini.
+// ============================================================
+
 import { initializeApp, deleteApp } from "firebase/app";
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged,
@@ -8,7 +13,8 @@ import {
   collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, setDoc, getDoc,
   query, where, getDocs, writeBatch,
 } from "firebase/firestore";
-import { auth, db, firebaseConfig } from "./firebase";
+import { getToken } from "firebase/messaging";
+import { auth, db, firebaseConfig, messaging, messagingSiap, VAPID_KEY } from "./firebase";
 
 export const KOLEKSI = {
   guru: "guru",
@@ -20,6 +26,8 @@ export const KOLEKSI = {
   akhlak: "penilaianAkhlak",
   suratTugas: "pengajuanSuratTugas",
 };
+
+/* ---------- Autentikasi ---------- */
 
 export const masuk = (email, password) => signInWithEmailAndPassword(auth, email, password);
 export const keluar = () => signOut(auth);
@@ -45,6 +53,7 @@ export const gantiPasswordSendiri = async (passwordLama, passwordBaru) => {
   await updatePassword(user, passwordBaru);
 };
 
+// Membuat akun guru TANPA memutus sesi admin: pakai instans Firebase kedua sementara.
 export const buatAkunGuru = async ({ email, password, guruId, nama }) => {
   const appKedua = initializeApp(firebaseConfig, "pembuatan-akun-" + Date.now());
   try {
@@ -78,6 +87,8 @@ export const adminUbahAkunGuru = async ({ targetUid, guruId, emailBaru, password
   if (!res.ok) throw new Error(data?.error || `Gagal memperbarui akun (${res.status}).`);
   return data;
 };
+
+/* ---------- Langganan data realtime ---------- */
 
 export const langgananData = (sesi, cb) => {
   const stops = [];
@@ -119,6 +130,8 @@ export const langgananData = (sesi, cb) => {
 export const langgananUsers = (cb) =>
   onSnapshot(collection(db, "users"), (s) => cb(s.docs.map((d) => ({ uid: d.id, ...d.data() }))), () => cb([]));
 
+/* ---------- Operasi tulis (khusus admin, ditegakkan Rules) ---------- */
+
 const bersih = (obj) => {
   const { id, ...sisa } = obj;
   Object.keys(sisa).forEach((k) => sisa[k] === undefined && delete sisa[k]);
@@ -130,9 +143,11 @@ export const perbaruiDok = (kol, id, patch) => updateDoc(doc(db, kol, id), bersi
 export const hapusDok = (kol, id) => deleteDoc(doc(db, kol, id));
 export const simpanPengaturan = (patch) => setDoc(doc(db, "pengaturan", "utama"), patch, { merge: true });
 
-// Penilaian Akhlak Mandiri — ID dokumen deterministik (guruId_TA_Semester) sehingga
-// otomatis membatasi satu pengisian per guru per semester (mengisi ulang = menimpa dokumen yang sama).
-// Guru hanya boleh menulis selagi status masih "Menunggu Validasi" (ditegakkan oleh Security Rules).
+/* ---------- Penilaian Akhlak Mandiri ---------- */
+// ID dokumen deterministik (guruId_TA_Semester) sehingga otomatis membatasi satu pengisian
+// per guru per semester (mengisi ulang = menimpa dokumen yang sama). Guru hanya boleh menulis
+// selagi status masih "Menunggu Validasi" (ditegakkan oleh Security Rules).
+
 export const idAkhlak = (guruId, ta, semester) => `${guruId}_${ta.replace("/", "-")}_${semester}`;
 
 export const ajukanPenilaianAkhlak = (guruId, ta, semester, isi) =>
@@ -147,18 +162,6 @@ export const validasiPenilaianAkhlak = (docId, catatanValidasi = "") =>
 
 export const bukaKembaliPenilaianAkhlak = (docId) =>
   updateDoc(doc(db, KOLEKSI.akhlak, docId), { status: "Menunggu Validasi", catatanValidasi: "", tanggalValidasi: null });
-
-export const hapusGuruMenyeluruh = async (guruId) => {
-  const batch = writeBatch(db);
-  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan, KOLEKSI.supervisi, KOLEKSI.administrasi, KOLEKSI.akhlak, KOLEKSI.suratTugas]) {
-    const s = await getDocs(query(collection(db, kol), where("guruId", "==", guruId)));
-    s.docs.forEach((d) => batch.delete(d.ref));
-  }
-  const u = await getDocs(query(collection(db, "users"), where("guruId", "==", guruId)));
-  u.docs.forEach((d) => batch.delete(d.ref));
-  batch.delete(doc(db, KOLEKSI.guru, guruId));
-  await batch.commit();
-};
 
 /* ---------- Pengajuan Surat Tugas ---------- */
 // Guru mengajukan → admin menyetujui (otomatis membuat Tugas Insidental, belum dinilai) atau menolak.
@@ -204,3 +207,56 @@ export const tolakSuratTugas = (id, catatanAdmin = "") =>
   updateDoc(doc(db, KOLEKSI.suratTugas, id), {
     status: "Ditolak", catatanAdmin, diprosesPada: new Date().toISOString(),
   });
+
+export const hapusGuruMenyeluruh = async (guruId) => {
+  const batch = writeBatch(db);
+  for (const kol of [KOLEKSI.struktural, KOLEKSI.insidental, KOLEKSI.catatan, KOLEKSI.supervisi, KOLEKSI.administrasi, KOLEKSI.akhlak, KOLEKSI.suratTugas]) {
+    const s = await getDocs(query(collection(db, kol), where("guruId", "==", guruId)));
+    s.docs.forEach((d) => batch.delete(d.ref));
+  }
+  const u = await getDocs(query(collection(db, "users"), where("guruId", "==", guruId)));
+  u.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(doc(db, KOLEKSI.guru, guruId));
+  await batch.commit();
+};
+
+/* ---------- Notifikasi Push (Firebase Cloud Messaging) ---------- */
+
+// Status izin notifikasi browser saat ini, tanpa memunculkan prompt: "granted" | "denied" | "default"
+export const statusIzinNotifikasi = () =>
+  (typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+
+// Minta izin (memunculkan prompt browser bila belum pernah ditolak/diizinkan), lalu simpan
+// token perangkat ini ke Firestore users/{uid}.fcmToken supaya server bisa mengirim notifikasi
+// ke perangkat ini. Harus dipanggil dari dalam aksi klik pengguna (banyak browser menolak
+// permintaan izin notifikasi yang dipicu otomatis tanpa interaksi).
+export const mintaIzinNotifikasi = async () => {
+  const didukung = await messagingSiap;
+  if (!didukung || !messaging) throw new Error("Browser ini tidak mendukung notifikasi push.");
+  const izin = await Notification.requestPermission();
+  if (izin !== "granted") throw new Error("Izin notifikasi tidak diberikan.");
+  const token = await getToken(messaging, { vapidKey: VAPID_KEY });
+  if (!token) throw new Error("Gagal mendapatkan token notifikasi.");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sesi tidak aktif.");
+  await setDoc(doc(db, "users", user.uid), { fcmToken: token }, { merge: true });
+  return token;
+};
+
+// Kirim notifikasi lewat fungsi server (/api/kirim-notifikasi). Gagal kirim notifikasi TIDAK
+// boleh menggagalkan aksi utama (mis. menyetujui surat tugas) — jadi selalu dibungkus try/catch
+// oleh pemanggil, atau pakai versi "aman" di bawah yang membungkusnya sendiri.
+export const kirimNotifikasi = async ({ tujuan, guruId, judul, isi, data }) => {
+  const user = auth.currentUser;
+  if (!user) return;
+  const idToken = await user.getIdToken();
+  await fetch("/api/kirim-notifikasi", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ tujuan, guruId, judul, isi, data }),
+  });
+};
+
+// Versi "aman": kegagalan kirim notifikasi (mis. belum ada yang mengaktifkan izin) diam-diam
+// diabaikan, tidak pernah melempar error ke pemanggil.
+export const kirimNotifikasiAman = (opsi) => kirimNotifikasi(opsi).catch(() => {});
